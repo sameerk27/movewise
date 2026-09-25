@@ -119,6 +119,17 @@ public class PowerShellPolicyTests
     }
 
     [Fact]
+    public void An_alert_switched_on_is_not_an_unmatched_recipient()
+    {
+        var item = Item(Dlp, """{ "Name": "PII", "rules": [ { "Name": "PII rule", "GenerateAlert": ["True"], "GenerateIncidentReport": ["false"] } ] }""");
+
+        var result = Transformer.Transform(item, Plan(), new TransformOptions());
+
+        Assert.Empty(result.Problems);
+        Assert.Equal("True", result.Desired["rules"]![0]!["GenerateAlert"]![0]!.GetValue<string>());
+    }
+
+    [Fact]
     public void Creates_mail_flow_rules_and_dlp_policies_in_test_mode()
     {
         var rule = Transformer.Transform(Item(TransportRule, """{ "Name": "Block exe", "Mode": "Enforce" }"""), Plan(), new TransformOptions());
@@ -185,6 +196,18 @@ public class PowerShellPolicyTests
         var initial = plan.Find(ResourceRegistry.Domain, "contoso.onmicrosoft.com")!;
         Assert.Equal((MatchKind.InitialDomain, "fabrikam.onmicrosoft.com"), (initial.Kind, initial.Destination!.Id));
         Assert.Equal(MatchKind.External, plan.Find(ResourceRegistry.Domain, "partner.example")!.Kind);
+    }
+
+    [Fact]
+    public async Task Matching_stops_when_the_sources_domains_cant_be_read()
+    {
+        // Otherwise every source address would be kept as a partner's.
+        var source = SourceTenant().Failing(Domains);
+        var policy = Uses(new Dependency(ResourceRegistry.Recipient, "anna@contoso.com", "x"));
+
+        var error = await Assert.ThrowsAsync<InvalidOperationException>(() => Matcher.BuildAsync(source, DestinationTenant(), [policy], [policy]));
+
+        Assert.Contains("source tenant's domains", error.Message);
     }
 
     [Fact]

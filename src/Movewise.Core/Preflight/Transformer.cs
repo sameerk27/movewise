@@ -282,6 +282,9 @@ public static class Transformer
         value = "";
         if (node is not JsonValue jsonValue || !jsonValue.TryGetValue<string>(out var text) || string.IsNullOrWhiteSpace(text) || rule.Ignore.Contains(text))
             return false;
+        // Settings that usually name recipients can also be just on or off, as DependencyExtractor treats them.
+        if (rule.TargetType == ResourceRegistry.Recipient && bool.TryParse(text, out _))
+            return false;
         value = text;
         return true;
     }

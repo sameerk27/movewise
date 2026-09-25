@@ -14,7 +14,7 @@
             @if (Plan is not null && !busy)
             {
                 <div class="head-actions">
-                    <button class="btn ghost" @onclick="ImportCsv">Import CSV</button>
+                    <button class="btn ghost" @onclick="ImportCsvAsync">Import CSV</button>
                     <button class="btn ghost" disabled="@(Plan.Items.Count == 0)" @onclick="ExportCsv">Export CSV</button>
                     <button class="btn ghost" @onclick="BuildAsync">Match again</button>
                 </div>
@@ -383,7 +383,7 @@
         messageProblems = [];
     }
 
-    void ImportCsv()
+    async Task ImportCsvAsync()
     {
         if (Plan is null)
             return;
@@ -402,10 +402,16 @@
             return;
         }
         var result = MappingCsv.Read(Plan, text);
-        message = $"Applied {result.Applied} decision{(result.Applied == 1 ? "" : "s")} from {Path.GetFileName(path)}."
+        // A "create" row adds the object to the migration, as the Create button does.
+        foreach (var mapping in Plan.Items.Where(m => m.Kind == MatchKind.CreateInDestination).ToList())
+            Migration.CreateInDestination(mapping);
+        var imported = $"Applied {result.Applied} decision{(result.Applied == 1 ? "" : "s")} from {Path.GetFileName(path)}."
             + (result.Problems.Count > 0 ? $" {result.Problems.Count} row{(result.Problems.Count == 1 ? " was" : "s were")} skipped:" : "");
-        messageProblems = result.Problems;
         State.NotifyChanged();
+        if (!State.MappingIsCurrent)
+            await BuildAsync();
+        message = imported;
+        messageProblems = result.Problems;
     }
 
     static string DestinationText(Mapping mapping) => mapping.Kind switch
