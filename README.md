@@ -9,7 +9,7 @@ Services, in build order: Entra ID, Intune, Defender for Office 365, Exchange On
 Phases 0 to 5 of the build plan (every service: Entra ID, Intune, Defender for Office 365, Exchange Online, Purview and Teams):
 
 - [x] Windows app shell (WPF + Blazor Hybrid) with the mockup's layout
-- [x] Sign-in to source and destination through the Windows sign-in broker, one account per tenant
+- [x] Sign-in to source and destination through the Windows sign-in broker, one account per tenant; when Movewise has to ask again (new permissions, an expired session), a different account is refused
 - [x] Guest accounts rejected; source and destination must be different tenants
 - [x] Admin role check for each side, and licenses in the source that the destination lacks
 - [x] Exchange Online connection test through PowerShell 7 hosted inside the app
@@ -19,7 +19,7 @@ Phases 0 to 5 of the build plan (every service: Entra ID, Intune, Defender for O
 - [x] Save the selected policies to a project folder as normalized JSON
 - [x] Map dependencies: groups (by name, then mail nickname), users (by email, then username), apps (by app ID), named locations, authentication strengths, filters and scope tags (by name, or created with the policies); manual matching with destination search, create or remove; decisions kept when matching again; CSV export and import
 - [x] Pre-flight dry run: every policy rewritten for the destination (mapped IDs, placeholders for objects created during deploy, removals, report-only Conditional Access), with checks for unmatched objects, manual matches that no longer exist, admin roles, Entra ID P1/P2 and Intune licenses, name conflicts (skip or rename), removed exclusions, policies that exclude nobody, and secrets Graph doesn't return; before/after view per policy; CSV report
-- [x] Deploy: pre-flight runs once more, optional copy of the destination's current policies, then groups (created empty) and policies in dependency order with IDs filled in as objects are created, then Intune assignments and app protection apps; progress saved after every object; resume after a stop, crash or dropped connection (an unanswered create is looked up by name before retrying); rollback that deletes only what the run created; Windows kept awake; results CSV
+- [x] Deploy: pre-flight runs once more, optional copy of the destination's current policies, then groups (created empty) and policies in dependency order with IDs filled in as objects are created, then Intune assignments and app protection apps; progress saved after every object; resume after a stop, crash or dropped connection (an unanswered create is looked up by name before retrying, and for groups only one made after the request counts, so a same-name group already in the destination is never taken); a policy skipped because something it needs failed is tried again on resume; rollback that deletes only what the run created; Windows kept awake; results CSV
 - [x] Defender for Office 365: anti-phishing, anti-spam, outbound spam, anti-malware, Safe Links and Safe Attachments policies, each with its rule; preset and default policies left out
 - [x] Defender for Office 365: quarantine policies (created before the policies that name them; built-in ones left out) and the Tenant Allow/Block List (senders, URLs, file hashes; expired entries left out)
 - [x] Settings every tenant already has are changed to match the source instead of created: the default anti-phishing, anti-spam, outbound spam and anti-malware policies; the tenant-wide Safe Links and Safe Attachments settings; quarantine notification settings; the Standard and Strict preset security policies (on or off, and who they apply to); the Default remote domain; the default Outlook on the web and mobile device mailbox policies. Pre-flight compares them with the destination's and shows before and after for each setting that differs; only those are changed; rolling back puts the destination's earlier values back
@@ -31,11 +31,17 @@ Phases 0 to 5 of the build plan (every service: Entra ID, Intune, Defender for O
 - [x] Only settings a New cmdlet accepts are sent; anything it can't take is listed for the admin to set by hand; rule order isn't copied
 - [x] Purview sensitivity labels (encryption, headers and footers, watermarks, site and group protection, documented advanced settings; sublabels after their parents) and label policies (labels named in a policy are linked to the labels read with it). Settings New-Label doesn't document are listed for the admin rather than sent
 - [x] Teams: meeting, messaging, calling, app setup, app permission, channels and update policies through Microsoft Teams PowerShell (bundled), each with its group assignments in the source's order; built-in and org-wide (Global) policies left out; policies assigned only to single users are listed
-- [x] Support log: a daily log in `%LOCALAPPDATA%\MovewiseData\Logs` with tokens, addresses, tenant names and IPs removed from every line; unexpected errors logged; "Save support log" in the sidebar
-- [x] Installer and updates with Velopack: self-contained build, Setup.exe (installs WebView2 where missing), portable zip, update packages; signing through signtool or Azure Trusted Signing; an update button in the sidebar that never interrupts a deployment. See [docs/releasing.md](docs/releasing.md)
+- [x] Support log: a daily log in `%LOCALAPPDATA%\MovewiseData\Logs` with tokens, secrets and passwords, addresses, tenant names, the signed-in tenants' domains (in any case), `DOMAIN\user` names, profile paths and IPs removed from every line; unexpected errors logged; "Save support log" in the sidebar
+- [x] Installer and updates with Velopack: self-contained build, Setup.exe (installs WebView2 where missing), portable zip, update packages; signing through signtool or Azure Trusted Signing; an update button in the sidebar that never interrupts a deployment, and nothing can start while an update downloads. The **Release** GitHub Actions workflow builds on Windows and attaches the result to a draft release. See [docs/releasing.md](docs/releasing.md)
 - [x] Demo mode: "Try the demo" on the Connect screen connects two built-in sample tenants (Contoso and Fabrikam) that live only in memory, so every step, including deploy and rollback, can be tried without real tenants or an app registration. Demo runs are kept in a temporary folder
 - [x] "Check services" on each tenant tests Microsoft Graph, Exchange Online, Security & Compliance and Teams, and says why any of them fails
-- [ ] Before the first release: a signing certificate, a download location for UpdateUrl, and a test against real tenants
+- [x] First build: 0.1.0, unsigned, as a draft GitHub release, for testing only
+
+Before the first release to admins:
+
+- [ ] A code signing certificate (until then Windows SmartScreen warns "Unknown publisher")
+- [ ] A download location for `UpdateUrl`
+- [ ] A test against real tenants, including what can only be checked on Windows: signing in again as a different account mid-deployment is refused, an update can't restart Movewise during a deployment, and the source's and destination's Teams PowerShell connections don't replace each other
 
 ## Build and run
 
@@ -52,6 +58,8 @@ Requires the .NET 8 SDK on Windows 10 or 11 (WebView2 is built into Windows 11).
    dotnet test
    dotnet run --project src/Movewise.App
    ```
+
+To build a release, run **Actions → Release → Run workflow** on GitHub with the version, or `.\tools\Publish.ps1 -Version <version>` locally. See [docs/releasing.md](docs/releasing.md). The permissions Movewise's app registration is granted are listed in [docs/app-registration.md](docs/app-registration.md).
 
 ## Layout
 
