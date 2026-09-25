@@ -8,6 +8,7 @@
 ![.NET](https://img.shields.io/badge/.NET-8-512BD4)
 ![UI](https://img.shields.io/badge/UI-WPF%20%2B%20Blazor%20Hybrid-5C2D91)
 ![Status](https://img.shields.io/badge/status-pre--release%200.1.0-orange)
+[![License: MIT](https://img.shields.io/badge/license-MIT-green)](LICENSE)
 
 [Download](#download) · [Build from source](#build-from-source) · [How it works](#how-it-works) · [What it migrates](#what-it-migrates) · [Docs](#documentation)
 
@@ -218,3 +219,7 @@ Found a bug, or a policy type Movewise should cover? [Open an issue](https://git
 |---|---|
 | [docs/app-registration.md](docs/app-registration.md) | The app registration, every permission it's granted and why, and why the source stays unchanged |
 | [docs/releasing.md](docs/releasing.md) | Building, signing and hosting releases, and what admins see when installing and updating |
+
+## License
+
+Movewise is released under the [MIT License](LICENSE). It comes without warranty: test it against non-production tenants first, and review every pre-flight report before deploying.
