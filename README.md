@@ -45,9 +45,9 @@ flowchart LR
 
 ## Download
 
-> **Pre-release.** 0.1.0 is an unsigned test build, published as a draft release. Don't hand it to client admins until it's signed (see [what's left](#before-the-first-release)).
+> **Pre-release.** 0.1.0 is an unsigned test build. Try it against test tenants, and don't hand it to client admins until it's signed (see [what's left](#before-the-first-release)).
 
-1. Open the **[Releases](https://github.com/sameerk27/movewise/releases)** page. The repository is private, so you need access to it.
+1. Open the **[latest release](https://github.com/sameerk27/movewise/releases)**. Pre-releases are listed there too.
 2. Download the file for your case:
 
    | File | Use it for |
@@ -183,7 +183,7 @@ Phases 0 to 5 of the build plan:
 - [x] Installer and updates with Velopack: self-contained build, Setup.exe (installs WebView2 where missing), portable zip, update packages; signing through signtool or Azure Trusted Signing; an update button in the sidebar that never interrupts a deployment, and nothing can start while an update downloads. The **Release** GitHub Actions workflow builds on Windows and attaches the result to a draft release
 - [x] Demo mode: "Try the demo" on the Connect screen connects two built-in sample tenants (Contoso and Fabrikam) that live only in memory, so every step, including deploy and rollback, can be tried without real tenants or an app registration. Demo runs are kept in a temporary folder
 - [x] "Check services" on each tenant tests Microsoft Graph, Exchange Online, Security & Compliance and Teams, and says why any of them fails
-- [x] First build: 0.1.0, unsigned, as a draft GitHub release, for testing only
+- [x] First build: 0.1.0, unsigned, published as a GitHub pre-release for testing
 
 </details>
 
@@ -207,6 +207,10 @@ Phases 0 to 5 of the build plan:
 Adding a policy type means adding one entry to `ResourceRegistry`: where to read and create it, how to assign it, which fields are read-only, and which fields point at other objects.
 
 Runs that earlier versions saved under `Documents\Movewise\Runs` are still listed, and resumed or rolled back where they are.
+
+## Feedback
+
+Found a bug, or a policy type Movewise should cover? [Open an issue](https://github.com/sameerk27/movewise/issues). Include the support log (**Save support log** in the sidebar) if something failed. Identifying details are removed from it, but check it before attaching it anyway.
 
 ## Documentation
 
