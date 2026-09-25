@@ -354,6 +354,26 @@ public static partial class PreflightCheck
                 stillTaken));
         }
 
+        // Retention policies' rules name the labels they publish or apply by name, and nothing rewrites that name. A label
+        // created as "X (migrated)" would leave them pointing at the destination's own "X".
+        var renamedLabels = transformed
+            .Where(t => t.Source.Type.Id == ResourceRegistry.RetentionLabel && rename.Contains(MappingPlan.KeyOf(t.Source.Type.Id, t.Source.SourceId)))
+            .Select(t => t.Source.DisplayName)
+            .ToList();
+        var namingRenamed = transformed
+            .Where(t => t.Source.Type.Id == ResourceRegistry.RetentionPolicy && t.Desired["rules"] is JsonArray)
+            .SelectMany(t => renamedLabels
+                .Where(label => ((JsonArray)t.Desired["rules"]!).ToJsonString().Contains(label, StringComparison.OrdinalIgnoreCase))
+                .Select(label => $"{t.Source.DisplayName}: label \"{label}\""))
+            .ToList();
+        if (namingRenamed.Count > 0)
+        {
+            findings.Add(new Finding(Severity.Warning,
+                "Retention policies name a renamed label",
+                $"These labels are created with \"{options.RenameSuffix.Trim()}\" added, but the retention policies that publish or apply them still name the destination's existing label. Point each policy at the migrated label in the Purview portal after deploying, or rename the existing label in the destination and run pre-flight again.",
+                namingRenamed));
+        }
+
         // Settings that exist in every tenant: compared with the destination's, and only what differs is changed.
         var settingsChanges = new Dictionary<string, (JsonObject Current, IReadOnlyList<string> Changed)>();
         var changedSettings = new List<string>();

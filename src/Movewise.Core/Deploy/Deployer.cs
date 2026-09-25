@@ -47,8 +47,20 @@ public static class Deployer
         {
             step.Status = status;
             step.Message = message;
+            step.WaitsOnFailedStep = false;
             if (status is StepStatus.Done or StepStatus.Failed or StepStatus.Skipped)
                 step.Finished = DateTimeOffset.Now;
+            await save();
+            changed?.Invoke(step);
+        }
+
+        // Kept for the next attempt, when what it needs may have been created.
+        async Task Skip(List<string> missing)
+        {
+            step.Status = StepStatus.Skipped;
+            step.Message = $"Needs {DeployPlanner.Names(missing, run.Steps, null)}, which couldn't be created.";
+            step.WaitsOnFailedStep = true;
+            step.Finished = DateTimeOffset.Now;
             await save();
             changed?.Invoke(step);
         }
@@ -72,7 +84,7 @@ public static class Deployer
                 var missing = Resolve(values, run);
                 if (missing.Count > 0)
                 {
-                    await Update(StepStatus.Skipped, $"Needs {DeployPlanner.Names(missing, run.Steps, null)}, which couldn't be created.");
+                    await Skip(missing);
                     return;
                 }
 
@@ -120,12 +132,13 @@ public static class Deployer
                 var missing = Resolve(body, run);
                 if (missing.Count > 0)
                 {
-                    await Update(StepStatus.Skipped, $"Needs {DeployPlanner.Names(missing, run.Steps, null)}, which couldn't be created.");
+                    await Skip(missing);
                     return;
                 }
                 var type = step.IsGroup ? null : ResourceRegistry.Get(step.TargetType);
                 type?.PrepareForCreate?.Invoke(body);
 
+                step.CreateSent = DateTimeOffset.UtcNow;
                 await Update(StepStatus.Creating);
                 try
                 {
@@ -424,7 +437,8 @@ public static class Deployer
 
     /// <summary>
     /// Assigns a new Teams policy to its groups, in the source's order. On a retry, an assignment that "already exists"
-    /// is taken to be the one the interrupted attempt made.
+    /// is taken to be the one an earlier attempt made only if that attempt got no answer. Otherwise the group already
+    /// had a policy of this type, which isn't this run's, so rollback mustn't remove it.
     /// </summary>
     static async Task<string?> AssignTeamsPolicyAsync(IPowerShell shell, ResourceType type, DeployRun run, DeployStep step, bool isRetry, Func<Task> save, CancellationToken ct)
     {
@@ -448,18 +462,25 @@ public static class Deployer
             if (assignment["Rank"] is JsonValue rank)
                 parameters["Rank"] = rank.DeepClone();
 
+            var sentBefore = isRetry && string.Equals(step.PendingAssignment, groupId, StringComparison.OrdinalIgnoreCase);
+            step.PendingAssignment = groupId;
+            await save();
             try
             {
                 await shell.InvokeAsync("New-CsGroupPolicyAssignment", parameters, ct);
             }
-            catch (PowerShellException ex) when (isRetry && ex.IsAlreadyExists)
+            catch (PowerShellException ex) when (sentBefore && ex.IsAlreadyExists)
             {
             }
             catch (Exception ex) when (ex is not OperationCanceledException)
             {
+                // A clear refusal means nothing was assigned; only an unanswered request may have been.
+                if (!IsUncertain(ex, ct))
+                    step.PendingAssignment = null;
                 return $"Created, but it couldn't be assigned to group {groupId}: {ex.Message}";
             }
 
+            step.PendingAssignment = null;
             step.CreatedAssignments.Add(groupId);
             await save();
         }
@@ -623,7 +644,8 @@ public static class Deployer
     /// <summary>Swaps placeholders for the IDs of objects this run created. Returns the keys it couldn't resolve.</summary>
     static List<string> Resolve(JsonNode node, DeployRun run)
     {
-        var ids = run.Steps.Where(s => s.DestinationId is not null && s.Status is StepStatus.Created or StepStatus.Done)
+        // A step that failed after its object was created (a label whose settings didn't all apply, say) still has it.
+        var ids = run.Steps.Where(s => s.DestinationId is not null && s.Status is StepStatus.Created or StepStatus.Done or StepStatus.Failed)
             .ToDictionary(s => s.Key, s => s.DestinationId!);
         var missing = new List<string>();
         Walk(node);
@@ -685,8 +707,16 @@ public static class Deployer
         {
             if (step.IsGroup)
             {
-                var page = await tenant.Graph.GetObjectAsync(GraphQuery.Where("v1.0/groups", $"displayName eq {GraphQuery.Literal(step.DisplayName)}", "id", top: 2), ct);
-                ids = (page["value"]?.AsArray().OfType<JsonObject>() ?? []).Select(g => g["id"]?.GetValue<string>()).ToList();
+                var page = await tenant.Graph.GetObjectAsync(GraphQuery.Where("v1.0/groups", $"displayName eq {GraphQuery.Literal(step.DisplayName)}", "id,createdDateTime", top: 10), ct);
+                // A group with this name that was there before the request was sent isn't this run's, whatever its name.
+                // Five minutes' leeway covers a difference between this PC's clock and Microsoft's.
+                var since = step.CreateSent?.AddMinutes(-5);
+                ids = (page["value"]?.AsArray().OfType<JsonObject>() ?? [])
+                    .Where(g => since is null || g["createdDateTime"] is not JsonValue created
+                        || !DateTimeOffset.TryParse(created.GetValue<string>(), System.Globalization.CultureInfo.InvariantCulture, System.Globalization.DateTimeStyles.AssumeUniversal, out var at)
+                        || at >= since)
+                    .Select(g => g["id"]?.GetValue<string>())
+                    .ToList();
             }
             else
             {

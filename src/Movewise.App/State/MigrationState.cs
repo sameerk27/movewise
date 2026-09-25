@@ -78,7 +78,8 @@ public sealed class MigrationState
 
     public PreflightChoices PreflightChoices { get; set; } = new();
 
-    public void SetPreflight(PreflightReport report)
+    /// <summary>Null while a dry run is under way, so a failed one doesn't leave the previous report on show.</summary>
+    public void SetPreflight(PreflightReport? report)
     {
         Preflight = report;
         Changed?.Invoke();

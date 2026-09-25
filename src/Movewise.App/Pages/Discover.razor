@@ -239,7 +239,15 @@
         var lines = new List<string> { "Area,Name,Details" };
         lines.AddRange(State.ManualSetup.Select(item => string.Join(",", Csv(item.Area), Csv(item.Name), Csv(item.Details))));
         lines.AddRange(State.ManualSetupWarnings.Select(warning => string.Join(",", Csv("Read warning"), Csv(""), Csv(warning))));
-        System.IO.File.WriteAllLines(path, lines, System.Text.Encoding.UTF8);
+        error = null;
+        try
+        {
+            System.IO.File.WriteAllLines(path, lines, System.Text.Encoding.UTF8);
+        }
+        catch (Exception ex) when (ex is System.IO.IOException or UnauthorizedAccessException)
+        {
+            error = $"Couldn't save {System.IO.Path.GetFileName(path)}. If it's open in Excel, close it and try again. ({ex.Message})";
+        }
     }
 
     static string PolicyState(ExportedResource item)

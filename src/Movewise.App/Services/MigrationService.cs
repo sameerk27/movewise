@@ -80,6 +80,7 @@ public sealed class MigrationService(AuthService auth, MigrationState state, Mov
         // Defender for Endpoint has an API of its own, with its own token; asked for only when indicators are read.
         var defenderApi = new GraphClient(token => auth.GetTokenAsync(account, Scopes.DefenderEndpoint, token), new Uri("https://api.security.microsoft.com/"));
         var info = await TenantInspector.InspectAsync(graph, ct);
+        Movewise.Core.Diagnostics.Redactor.Remember(info.DefaultDomain, info.InitialDomain);
 
         // Signing in took a while: make sure nothing started meanwhile (the buttons are off, but just in case).
         if (IsWorking || IsDemo)
@@ -262,9 +263,12 @@ public sealed class MigrationService(AuthService auth, MigrationState state, Mov
         var source = state.Source ?? throw new InvalidOperationException("Sign in to the source tenant first.");
         var types = Supported.SelectMany(ResourceRegistry.For);
         var result = await Exporter.ExportAsync(source.Clients, types, progress, ct);
+        EnsureSameTenants(source, null);
         state.SetExported(result);
         progress.Report("Reading mail flow connectors and DKIM domains…");
-        state.SetManualSetup(await Exporter.ReadManualSetupAsync(source.Clients, ct));
+        var manual = await Exporter.ReadManualSetupAsync(source.Clients, ct);
+        EnsureSameTenants(source, null);
+        state.SetManualSetup(manual);
         DiagnosticLog.Info($"Discovered {result.Items.Count} policies." + string.Concat(result.Warnings.Select(w => $" Couldn't read {w.Type.Id}: {w.Message}")));
     });
 
@@ -275,6 +279,7 @@ public sealed class MigrationService(AuthService auth, MigrationState state, Mov
         var destination = state.Destination ?? throw new InvalidOperationException("Sign in to the destination tenant first.");
         var selected = state.Exported.Where(e => state.Selected.Contains(MigrationState.Key(e))).ToList();
         var plan = await Matcher.BuildAsync(source.Graph, destination.Clients, selected, state.Exported, state.Mapping, progress, ct);
+        EnsureSameTenants(source, destination);
         state.SetMapping(plan);
         DiagnosticLog.Info($"Matched {plan.Items.Count} objects, {plan.UnresolvedCount} without a match.");
     });
@@ -283,14 +288,30 @@ public sealed class MigrationService(AuthService auth, MigrationState state, Mov
     public Task RunPreflightAsync(IProgress<string> progress, CancellationToken ct = default) => Logged("Pre-flight", async () =>
     {
         var destination = state.Destination ?? throw new InvalidOperationException("Sign in to the destination tenant first.");
+        state.SetPreflight(null);
         if (!state.MappingIsCurrent)
             await BuildMappingAsync(progress, ct);
 
         var selected = state.Exported.Where(e => state.Selected.Contains(MigrationState.Key(e))).ToList();
+        var decisions = Decisions(state.Mapping);
         var report = await PreflightCheck.RunAsync(destination.Clients, destination.Info, selected, state.Mapping!, state.PreflightChoices, progress, ct);
+        EnsureSameTenants(null, destination);
+        // A match changed on the Map screen meanwhile wasn't checked, so this report can't stand for what would be deployed.
+        if (Decisions(state.Mapping) != decisions || !state.MappingIsCurrent)
+            throw new InvalidOperationException("The mapping or the selection changed while the dry run was running. Run it again.");
         state.SetPreflight(report);
         DiagnosticLog.Info($"Pre-flight: {report.CreateCount} to create, {report.SkipCount} skipped, {report.BlockedCount} blocked. Findings: " + string.Join("; ", report.Findings.Select(f => $"{f.Severity} {f.Title}")));
     });
+
+    /// <summary>Discovery and matching take a while; a tenant signed out and another signed in meanwhile gets none of their results.</summary>
+    void EnsureSameTenants(TenantConnection? source, TenantConnection? destination)
+    {
+        if ((source is not null && !ReferenceEquals(state.Source, source)) || (destination is not null && !ReferenceEquals(state.Destination, destination)))
+            throw new InvalidOperationException("A tenant was signed out or changed while this was running, so its results were discarded. Start again.");
+    }
+
+    static string Decisions(MappingPlan? plan) =>
+        plan is null ? "" : string.Join("|", plan.Items.Select(m => $"{m.Key}={m.Kind}:{m.Destination?.Id}"));
 
     public Task<IReadOnlyList<ObjectRef>> SearchDestinationAsync(string targetType, string text, CancellationToken ct = default)
     {
@@ -323,6 +344,11 @@ public sealed class MigrationService(AuthService auth, MigrationState state, Mov
     /// <summary>True while preparing, deploying or rolling back: the tenants mustn't change meanwhile.</summary>
     public bool IsWorking => IsBusy || IsPreparing;
 
+    /// <summary>Set by <see cref="UpdateService"/> while an update downloads: Movewise restarts when it's done, so nothing may start.</summary>
+    public bool IsUpdating { get; set; }
+
+    const string UpdatingMessage = "Movewise is downloading an update and will restart when it's done. Start the deployment after the restart.";
+
     /// <summary>What the running deployment is doing, for the screen.</summary>
     public string? BusyText { get; private set; }
 
@@ -335,6 +361,8 @@ public sealed class MigrationService(AuthService auth, MigrationState state, Mov
     {
         if (IsWorking)
             throw new InvalidOperationException("A deployment is already being prepared or running.");
+        if (IsUpdating)
+            throw new InvalidOperationException(UpdatingMessage);
         IsPreparing = true;
         BusyText = "Running pre-flight once more…";
         state.NotifyChanged();
@@ -403,6 +431,8 @@ public sealed class MigrationService(AuthService auth, MigrationState state, Mov
             throw new InvalidOperationException("A deployment is already running.");
         if (IsPreparing)
             throw new InvalidOperationException("A deployment is being prepared.");
+        if (IsUpdating)
+            throw new InvalidOperationException(UpdatingMessage);
 
         using var cts = new CancellationTokenSource();
         _running = cts;

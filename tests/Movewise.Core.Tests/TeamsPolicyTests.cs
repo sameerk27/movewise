@@ -90,6 +90,27 @@ public class TeamsPolicyTests
     }
 
     [Fact]
+    public async Task A_group_that_already_had_a_policy_of_this_type_is_never_counted_as_assigned()
+    {
+        var run = PlanRun(await ExportExecs());
+        var teams = new FakePowerShell().Failing("New-CsGroupPolicyAssignment",
+            new PowerShellException("The group already exists in another policy assignment of this type."), times: 2);
+        var tenant = new TenantClients(new FakeGraph(), Teams: teams);
+        await Deployer.RunAsync(tenant, run, () => Task.CompletedTask);
+
+        // The retry gets the same refusal: it's the destination's own assignment, not one this run made.
+        await Deployer.RunAsync(tenant, run, () => Task.CompletedTask);
+
+        var policy = run.Steps.Single(s => s.TargetType == Meeting.Id);
+        Assert.Equal(StepStatus.Failed, policy.Status);
+        Assert.Contains("already exists", policy.Message);
+        Assert.DoesNotContain("dest-execs", policy.CreatedAssignments);
+
+        await Deployer.RollbackAsync(tenant, run, () => Task.CompletedTask);
+        Assert.DoesNotContain(teams.CallsTo("Remove-CsGroupPolicyAssignment"), c => c["GroupId"]!.GetValue<string>() == "dest-execs");
+    }
+
+    [Fact]
     public async Task Rollback_removes_the_assignments_before_the_policy()
     {
         var run = PlanRun(await ExportExecs());

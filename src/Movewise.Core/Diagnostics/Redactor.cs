@@ -14,9 +14,17 @@ public static partial class Redactor
     [GeneratedRegex(@"eyJ[A-Za-z0-9_-]{5,}\.[A-Za-z0-9_-]{5,}\.[A-Za-z0-9_-]*")]
     private static partial Regex Jwt();
 
-    // Also JSON, where the name is quoted: "access_token":"…".
-    [GeneratedRegex(@"(?i)\b(bearer|access_?token|refresh_?token|id_?token|client_?secret|password)(""?\s*[:=]\s*|\s+)(""?)[^\s"",;]+")]
+    // Also JSON, where the name is quoted: "access_token":"…". A quoted value goes whole, spaces and all.
+    [GeneratedRegex(@"(?i)\b(bearer|access_?token|refresh_?token|id_?token|client_?secret|secret_?text|api_?key|password)(""?\s*[:=]\s*|\s+)(?:("")(?:[^""\\]|\\.)*""|[^\s"",;]+)")]
     private static partial Regex Secret();
+
+    // A Windows sign-in name, CONTOSO\anna. The domain part is in capitals, as Windows writes it, so paths are left alone.
+    [GeneratedRegex(@"\b[A-Z][A-Z0-9-]{1,14}\\[A-Za-z0-9._-]+")]
+    private static partial Regex DownLevelLogon();
+
+    // The Windows username in a profile path: C:\Users\anna\AppData.
+    [GeneratedRegex(@"(?i)\\Users\\[^\\\s""']+")]
+    private static partial Regex ProfilePath();
 
     [GeneratedRegex(@"[A-Za-z0-9._%+'-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}")]
     private static partial Regex Email();
@@ -29,9 +37,32 @@ public static partial class Redactor
     [GeneratedRegex(@"(?i)/personal/[^/\s""'?#]+")]
     private static partial Regex OneDriveOwner();
 
-    // Lower case only, so .NET names in error details (System.Net.Http) are left alone.
-    [GeneratedRegex(@"\b(?:[a-z0-9](?:[a-z0-9-]*[a-z0-9])?\.)+(?:com|net|org|edu|gov|mil|int|info|biz|io|co|ai|app|dev|cloud|eu|uk|us|ca|au|nz|in|de|fr|nl|be|ch|at|es|it|pt|se|no|dk|fi|ie|pl|cz|jp|cn|sg|hk|za|br|mx)\b")]
+    // Any case, as Exchange often writes domains (Contoso.com). .NET names such as System.Net.Http are left alone below.
+    [GeneratedRegex(@"(?i)\b(?:[a-z0-9](?:[a-z0-9-]*[a-z0-9])?\.)+(?:com|net|org|edu|gov|mil|int|info|biz|io|co|ai|app|dev|cloud|tech|online|site|store|shop|xyz|me|tv|global|group|pro|eu|uk|us|ca|au|nz|in|de|fr|nl|be|ch|at|es|it|pt|se|no|dk|fi|ie|pl|cz|jp|cn|sg|hk|za|br|mx|ae|sa|qa|kr|tw|my|ph|th|vn|ar|cl|lu|gr|ro|hu|sk|si|hr|bg|lt|lv|ee|is|il|tr|ua|ng|ke|eg|pk|bd|lk)\b")]
     private static partial Regex DomainName();
+
+    // Every part capitalised and the rest in lower case, as .NET names are: System.Net, Microsoft.Graph.
+    [GeneratedRegex(@"^[A-Z][a-z0-9]*[A-Za-z0-9]*(?:\.[A-Z][a-z0-9]+[A-Za-z0-9]*)+$")]
+    private static partial Regex DotNetName();
+
+    // The signed-in tenants' own domains, whatever they end in (contoso.consulting).
+    static readonly HashSet<string> KnownDomains = new(StringComparer.OrdinalIgnoreCase);
+
+    /// <summary>Adds a tenant's domains, so they're removed even where the general pattern wouldn't catch them.</summary>
+    public static void Remember(params string?[] domains)
+    {
+        lock (KnownDomains)
+        {
+            foreach (var domain in domains)
+            {
+                if (!string.IsNullOrWhiteSpace(domain) && !IsMicrosoft(domain))
+                    KnownDomains.Add(domain.Trim());
+            }
+        }
+    }
+
+    static bool IsMicrosoft(string domain) =>
+        MicrosoftDomains.Any(d => domain.Equals(d, StringComparison.OrdinalIgnoreCase) || domain.EndsWith("." + d, StringComparison.OrdinalIgnoreCase));
 
     [GeneratedRegex(@"(?i)\b([0-9a-f]{8})-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}\b")]
     private static partial Regex Guid();
@@ -56,12 +87,18 @@ public static partial class Redactor
             return "";
 
         var result = Jwt().Replace(text, "[token]");
-        result = Secret().Replace(result, m => $"{m.Groups[1].Value}{m.Groups[2].Value}{m.Groups[3].Value}[hidden]");
+        result = Secret().Replace(result, m => $"{m.Groups[1].Value}{m.Groups[2].Value}{(m.Groups[3].Success ? "\"[hidden]\"" : "[hidden]")}");
         result = Email().Replace(result, "[email]");
+        result = DownLevelLogon().Replace(result, "[user]");
+        result = ProfilePath().Replace(result, @"\Users\[user]");
         result = OneDriveOwner().Replace(result, "/personal/[user]");
         result = TenantDomain().Replace(result, m => $"[tenant]{m.Groups[1].Value}.{m.Groups[2].Value.ToLowerInvariant()}");
-        result = DomainName().Replace(result, m =>
-            MicrosoftDomains.Any(d => m.Value.Equals(d, StringComparison.Ordinal) || m.Value.EndsWith("." + d, StringComparison.Ordinal)) ? m.Value : "[domain]");
+        string[] known;
+        lock (KnownDomains)
+            known = KnownDomains.OrderByDescending(d => d.Length).ToArray();
+        foreach (var domain in known)
+            result = Regex.Replace(result, $@"(?<![A-Za-z0-9-]){Regex.Escape(domain)}(?![A-Za-z0-9-])", "[domain]", RegexOptions.IgnoreCase);
+        result = DomainName().Replace(result, m => IsMicrosoft(m.Value) || DotNetName().IsMatch(m.Value) ? m.Value : "[domain]");
         result = Guid().Replace(result, m => m.Groups[1].Value[..4] + "…");
         result = IpAddress().Replace(result, "[ip]");
         result = Ipv6Address().Replace(result, "[ip]");

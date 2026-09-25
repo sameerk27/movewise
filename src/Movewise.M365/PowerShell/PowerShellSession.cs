@@ -444,9 +444,26 @@ public sealed class PowerShellSession(
         {
             using var ps = System.Management.Automation.PowerShell.Create(runspace);
             if (endpoint == PowerShellEndpoint.Teams)
+            {
                 ps.AddCommand("Disconnect-MicrosoftTeams");
+            }
             else
-                ps.AddCommand("Disconnect-ExchangeOnline").AddParameter("Confirm", false);
+            {
+                // Without -ConnectionId, Disconnect-ExchangeOnline closes every Exchange connection in the process: the
+                // other tenant's, and this tenant's other endpoint. Only this session's own is closed, found as in
+                // ConnectedTenantIds; when it can't be told, none is (the runspace is discarded anyway).
+                ps.AddScript("""
+                    param($Upn, $Eop)
+                    $mine = @(Get-Module | ForEach-Object Name)
+                    $all = @(Get-ConnectionInformation -ErrorAction SilentlyContinue)
+                    $ours = @($all | Where-Object { $_.ModuleName -and $mine -contains $_.ModuleName })
+                    if ($ours.Count -eq 0) { $ours = @($all | Where-Object { $_.UserPrincipalName -eq $Upn -and [bool]$_.IsEopSession -eq $Eop }) }
+                    $ids = @($ours | ForEach-Object ConnectionId | Where-Object { $_ })
+                    if ($ids.Count -gt 0) { Disconnect-ExchangeOnline -ConnectionId $ids -Confirm:$false }
+                    """)
+                    .AddParameter("Upn", tenant.UserPrincipalName)
+                    .AddParameter("Eop", endpoint == PowerShellEndpoint.Compliance);
+            }
             ps.Invoke();
         }
         catch (RuntimeException)

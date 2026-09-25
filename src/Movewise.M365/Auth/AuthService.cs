@@ -43,7 +43,16 @@ public sealed class AuthService(MovewiseOptions options, Func<IntPtr> parentWind
         catch (MsalUiRequiredException)
         {
             // New permissions (for example Exchange) or an expired session: ask again for the same account.
-            return await App.AcquireTokenInteractive(scopes).WithAccount(account).ExecuteAsync(ct);
+            var result = await App.AcquireTokenInteractive(scopes).WithAccount(account).ExecuteAsync(ct);
+            // The sign-in window lets the admin pick another account. A token for the other tenant would send this
+            // tenant's requests there, so only the account that was asked for is accepted.
+            if (result.Account?.HomeAccountId?.Identifier != account.HomeAccountId?.Identifier
+                || !string.Equals(result.TenantId, account.HomeAccountId?.TenantId, StringComparison.OrdinalIgnoreCase))
+            {
+                throw new InvalidOperationException(
+                    $"Movewise asked you to sign in again as {account.Username}, but another account was used. Nothing was sent with it. Try again and pick {account.Username}.");
+            }
+            return result;
         }
     }
 
