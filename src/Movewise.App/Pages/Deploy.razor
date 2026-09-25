@@ -1,0 +1,477 @@
+@page "/deploy"
+@using System.Diagnostics
+@using System.IO
+@using Movewise.Core.Deploy
+@using Movewise.Core.Preflight
+@inject MigrationState State
+@inject MigrationService Migration
+@implements IDisposable
+
+<div class="page">
+    <header class="page-head">
+        <div class="head-row">
+            <div class="head-text">
+                <h1>Deploy</h1>
+                <p class="muted">
+                    @if (Run is null)
+                    {
+                        <text>Create the selected policies in @DestinationName. The source tenant is only read, never changed.</text>
+                    }
+                    else
+                    {
+                        <text>Run @Run.RunId · @Run.SourceName → @Run.DestinationName · started @Run.Started.ToString("d MMM yyyy HH:mm")</text>
+                    }
+                </p>
+            </div>
+            @if (Run is not null)
+            {
+                <span class="pill big @RunClass" role="status">@RunText</span>
+            }
+        </div>
+        <StepBar Current="5" />
+    </header>
+
+    <div class="content">
+        @if (error is not null)
+        {
+            <div class="alert bad" role="alert">@error</div>
+        }
+        @if (message is not null)
+        {
+            <div class="alert ok" role="status">@message</div>
+        }
+
+        @if (State.Destination is null)
+        {
+            <div class="alert warn">Sign in to the destination tenant first. <a href="">Go to Connect</a></div>
+        }
+        else if (Migration.IsPreparing)
+        {
+            <div class="card pad" role="status">@Migration.BusyText</div>
+        }
+        else if (Run is null)
+        {
+            @if (Report is null || !Report.CanDeploy)
+            {
+                <div class="alert warn">
+                    @(Report is null ? "Run the pre-flight checks first." : Report.HasBlockers ? "Pre-flight found blockers. Fix them before deploying." : "There's nothing to create.")
+                    <a href="preflight">Go to Pre-flight</a>
+                </div>
+            }
+            else
+            {
+                <section class="card deploy-start">
+                    <h2>Ready to create @Report.CreateCount polic@(Report.CreateCount == 1 ? "y" : "ies") in @DestinationName</h2>
+                    <ul class="plan-list">
+                        @if (Report.BlockedSkipped && Report.BlockedCount > 0)
+                        {
+                            <li>@Report.BlockedCount blocked polic@(Report.BlockedCount == 1 ? "y is" : "ies are") left out, as you chose in pre-flight.</li>
+                        }
+                        @if (GroupsToCreate > 0)
+                        {
+                            <li>@GroupsToCreate group@(GroupsToCreate == 1 ? "" : "s") created first, with no members. You'll add members afterwards.</li>
+                        }
+                        <li>Then policies in dependency order: named locations and authentication strengths before Conditional Access; scope tags and filters before Intune policies, then their assignments; then Defender, Exchange and Purview policies with their rules.</li>
+                        @if (Report.SkipCount > 0)
+                        {
+                            <li>@Report.SkipCount skipped or already in the destination, as shown in pre-flight.</li>
+                        }
+                        <li>Pre-flight runs once more first, in case the destination changed.</li>
+                        <li>Progress is saved after every object. If anything stops the run, open it again here to finish it or roll it back.</li>
+                    </ul>
+                    <label class="snapshot">
+                        <input type="checkbox" @bind="snapshot" />
+                        <span>Save a copy of the destination's current policies first <span class="muted">(recommended, for your records)</span></span>
+                    </label>
+                    <div class="actions">
+                        <button class="btn primary" disabled="@Migration.IsWorking" @onclick="StartAsync">Deploy now</button>
+                    </div>
+                </section>
+            }
+
+            @if (previousRuns.Count > 0)
+            {
+                <section class="card table runs">
+                    <div class="row head"><span>Earlier runs into @DestinationName</span><span>From</span><span>In destination</span><span>Status</span><span></span></div>
+                    @foreach (var summary in previousRuns)
+                    {
+                        <div class="row">
+                            <span>@summary.Started.ToString("d MMM yyyy HH:mm") <span class="muted small mono">@summary.RunId</span></span>
+                            <span>@summary.SourceName</span>
+                            <span>@summary.Created object@(summary.Created == 1 ? "" : "s")</span>
+                            <span>
+                                @if (summary.RolledBack)
+                                {
+                                    <span class="pill neutral">Rolled back</span>
+                                }
+                                else if (summary.Remaining > 0)
+                                {
+                                    <span class="pill warn">@summary.Remaining unfinished</span>
+                                }
+                                else
+                                {
+                                    <span class="pill ok">Finished</span>
+                                }
+                            </span>
+                            <span><button class="btn ghost small-btn" @onclick="@(() => Open(summary))">Open</button></span>
+                        </div>
+                    }
+                </section>
+            }
+        }
+        else
+        {
+            var total = Run.Steps.Count;
+            var finished = Run.Steps.Count(s => s.Status is not (StepStatus.Pending or StepStatus.Creating));
+
+            @if (Migration.IsBusy)
+            {
+                <div class="card pad progress-card" role="status" aria-live="polite">
+                    <span>@Migration.BusyText</span>
+                    <div class="progress" role="progressbar" aria-valuemin="0" aria-valuemax="@total" aria-valuenow="@finished">
+                        <span style="width:@(total == 0 ? 0 : finished * 100 / total)%"></span>
+                    </div>
+                    <span class="muted small">Windows won't sleep while this runs. Stopping finishes the current object first.</span>
+                </div>
+            }
+
+            @if (confirmRollback)
+            {
+                <div class="alert bad confirm" role="alertdialog" aria-labelledby="rollback-title">
+                    <b id="rollback-title">@RollbackQuestion</b>
+                    <span>Only objects this run created are deleted; everything that was there before stays. Deleted groups can be restored from Entra ID's deleted groups for 30 days. Policies can't be restored.</span>
+                    <div class="actions">
+                        <button class="btn danger" @onclick="RollbackAsync">Delete them</button>
+                        <button class="btn ghost" @onclick="@(() => confirmRollback = false)">Cancel</button>
+                    </div>
+                </div>
+            }
+
+            <div class="stats four">
+                <div class="card stat"><b class="ok-text">@Run.DoneCount</b><span class="muted">done</span></div>
+                <div class="card stat"><b class="@(Run.FailedCount > 0 ? "bad-text" : "")">@Run.FailedCount</b><span class="muted">failed</span></div>
+                <div class="card stat"><b class="@(Run.SkippedCount > 0 ? "warn-text" : "")">@Run.SkippedCount</b><span class="muted">skipped</span></div>
+                <div class="card stat"><b>@Run.RemainingCount</b><span class="muted">unfinished</span></div>
+            </div>
+
+            <section class="card table deploy-table">
+                <div class="row head"><span>Object</span><span>Type</span><span>Status</span><span>Details</span></div>
+                @foreach (var step in Run.Steps)
+                {
+                    <div class="row">
+                        <span class="strong">@step.DisplayName</span>
+                        <span class="muted small">@step.TypeName</span>
+                        <span><span class="pill @StatusClass(step)">@StatusText(step)</span></span>
+                        <span class="small">
+                            @if (step.Message is not null)
+                            {
+                                <span class="@(step.Status is StepStatus.Failed or StepStatus.RollbackFailed ? "bad-text" : "muted")">@step.Message</span>
+                            }
+                            @if (step.Status == StepStatus.Done && step.Notes.Count > 0)
+                            {
+                                @foreach (var note in step.Notes)
+                                {
+                                    <span class="warn-text note">@note</span>
+                                }
+                            }
+                        </span>
+                    </div>
+                }
+            </section>
+
+            @if (Run.Completed is not null && Run.RolledBack is null && !Migration.IsBusy)
+            {
+                <section class="card">
+                    <h2>After deploying</h2>
+                    <ul class="plan-list">
+                        @* Only what Movewise actually changed: a policy that was already off in the source is simply off. *@
+                        @if (Run.Steps.Any(s => s.Status == StepStatus.Done && s.InTestMode && s.TargetType == Movewise.Core.Registry.ResourceRegistry.ConditionalAccessPolicy))
+                        {
+                            <li>Conditional Access policies that were on in the source are in report-only mode. Check the sign-in logs, then turn them on.</li>
+                        }
+                        @if (TestModeNames.Count > 0)
+                        {
+                            <li>These were created in test mode or switched off: @string.Join(", ", TestModeNames). Turn each one on once you've checked it.</li>
+                        }
+                        @if (Run.Steps.Any(s => s.Status == StepStatus.Done && s.Rules is { Count: > 0 }))
+                        {
+                            <li>New rules were added after the destination's existing ones. Set their priority if the order matters.</li>
+                        }
+                        @if (Run.Steps.Any(s => s.Status == StepStatus.Done && s.IsGroup))
+                        {
+                            <li>Add members to the new groups before turning policies on.</li>
+                        }
+                        <li>Re-enter any passwords or pre-shared keys that pre-flight listed; Graph doesn't return them.</li>
+                        <li>Keep the results file with your change records. It lists every new object's ID.</li>
+                    </ul>
+                </section>
+            }
+        }
+    </div>
+
+    <footer class="page-foot">
+        <div class="head-actions">
+            @if (Run is not null)
+            {
+                <button class="btn ghost" @onclick="DownloadResults">Download results</button>
+                <button class="btn ghost" disabled="@(Run.Folder is null)" @onclick="OpenFolder">Open run folder</button>
+            }
+        </div>
+        <div class="head-actions">
+            @if (Run is null)
+            {
+                <a class="btn ghost" href="preflight">Back</a>
+            }
+            else if (Migration.IsBusy)
+            {
+                <button class="btn ghost" disabled="@stopping" @onclick="Stop">@(stopping ? "Stopping…" : "Stop")</button>
+            }
+            else
+            {
+                <button class="btn ghost" @onclick="Close">@(Run.RolledBack is null && Run.RemainingCount > 0 ? "Close run" : "New deployment")</button>
+                @if (Run.CanRollBack && !confirmRollback)
+                {
+                    <button class="btn ghost danger-text" @onclick="@(() => confirmRollback = true)">Roll back this run</button>
+                }
+                @if (Run.RemainingCount > 0)
+                {
+                    <button class="btn primary" @onclick="ResumeAsync">@(Run.Steps.Any(s => s.Status != StepStatus.Pending) ? $"Retry {Run.RemainingCount} unfinished" : "Start")</button>
+                }
+            }
+        </div>
+    </footer>
+</div>
+
+@code {
+    bool snapshot = true;
+    bool stopping;
+    bool confirmRollback;
+    string? error;
+    string? message;
+    IReadOnlyList<RunSummary> previousRuns = [];
+
+    DeployRun? Run => State.Run;
+    PreflightReport? Report => State.Preflight;
+    string DestinationName => State.Destination?.Info.DisplayName ?? "the destination";
+
+    int GroupsToCreate => State.Mapping?.OfType(Movewise.Core.Registry.ResourceRegistry.Group).Count(m => m.Kind == MatchKind.CreateInDestination) ?? 0;
+
+    IReadOnlyList<string> TestModeNames => Run?.Steps
+        .Where(s => s.Status == StepStatus.Done && s.InTestMode && s.TargetType != Movewise.Core.Registry.ResourceRegistry.ConditionalAccessPolicy)
+        .Select(s => s.DisplayName)
+        .ToList() ?? [];
+
+    string RunText => Migration.IsBusy ? "Running"
+        : Run!.RolledBack is not null ? "Rolled back"
+        : Run.FailedCount > 0 ? $"{Run.FailedCount} failed"
+        : Run.RemainingCount > 0 ? "Not finished"
+        : "Deployed";
+
+    string RunClass => Migration.IsBusy ? "info"
+        : Run!.RolledBack is not null ? "neutral"
+        : Run.FailedCount > 0 ? "bad"
+        : Run.RemainingCount > 0 ? "warn"
+        : "ok";
+
+    protected override void OnInitialized()
+    {
+        State.Changed += OnStateChanged;
+        LoadPreviousRuns();
+    }
+
+    void LoadPreviousRuns()
+    {
+        try
+        {
+            previousRuns = Migration.PreviousRuns();
+        }
+        catch (Exception ex)
+        {
+            error = $"Couldn't list earlier runs. {ex.Message}";
+        }
+    }
+
+    async Task StartAsync()
+    {
+        // Preparing is tracked by MigrationService, so coming back to this screen can't start a second one.
+        if (Migration.IsWorking)
+            return;
+        error = null;
+        message = null;
+        try
+        {
+            await Migration.PrepareDeploymentAsync(snapshot, new Progress<string>(_ => InvokeAsync(StateHasChanged)));
+        }
+        catch (Exception ex)
+        {
+            error = ex.Message;
+            return;
+        }
+
+        await ResumeAsync();
+    }
+
+    async Task ResumeAsync()
+    {
+        error = null;
+        message = null;
+        try
+        {
+            await Migration.DeployAsync();
+            message = Run!.FailedCount == 0 && Run.RemainingCount == 0
+                ? $"Done. {DoneSummary} in {Run.DestinationName}."
+                : null;
+        }
+        catch (OperationCanceledException)
+        {
+            message = "Stopped. Retry to finish the run, or roll it back.";
+        }
+        catch (Exception ex)
+        {
+            error = $"The deployment stopped. {ex.Message}";
+        }
+        finally
+        {
+            stopping = false;
+        }
+    }
+
+    // Settings that exist in every tenant are changed, not created, and rolling back puts them back rather than deleting.
+    int SettingsChanged => Run?.Steps.Count(s => s.IsSettings && s.ExistsInDestination) ?? 0;
+
+    string DoneSummary
+    {
+        get
+        {
+            var changed = Run!.Steps.Count(s => s.IsSettings && s.Status == StepStatus.Done);
+            var created = Run.DoneCount - changed;
+            var parts = new List<string>();
+            if (created > 0 || changed == 0) parts.Add($"{created} object{(created == 1 ? "" : "s")} created");
+            if (changed > 0) parts.Add($"{changed} setting{(changed == 1 ? "" : "s")} changed");
+            return string.Join(" and ", parts);
+        }
+    }
+
+    string RollbackQuestion
+    {
+        get
+        {
+            var created = Run!.CreatedInDestination - SettingsChanged;
+            var question = $"Delete the {created} object{(created == 1 ? "" : "s")} this run created in {Run.DestinationName}";
+            return SettingsChanged > 0
+                ? $"{question}, and put back the {SettingsChanged} setting{(SettingsChanged == 1 ? "" : "s")} it changed?"
+                : question + "?";
+        }
+    }
+
+    async Task RollbackAsync()
+    {
+        confirmRollback = false;
+        var restoring = SettingsChanged;
+        error = null;
+        message = null;
+        try
+        {
+            await Migration.RollbackAsync();
+            message = Run!.RolledBack is not null
+                ? $"Rolled back. Everything this run created in {Run.DestinationName} has been deleted{(restoring > 0 ? ", and the settings it changed are back as they were" : "")}."
+                : null;
+            if (Run.RolledBack is null)
+                error = "Some objects couldn't be deleted. They're marked below; try again, or delete them in the admin center.";
+        }
+        catch (OperationCanceledException)
+        {
+            message = "Rollback stopped. Roll back again to finish.";
+        }
+        catch (Exception ex)
+        {
+            error = $"The rollback stopped. {ex.Message}";
+        }
+        finally
+        {
+            stopping = false;
+        }
+    }
+
+    void Stop()
+    {
+        stopping = true;
+        Migration.Stop();
+    }
+
+    void Open(RunSummary summary)
+    {
+        error = null;
+        message = null;
+        try
+        {
+            Migration.OpenRun(summary.Path);
+        }
+        catch (Exception ex)
+        {
+            error = $"Couldn't open that run. {ex.Message}";
+        }
+    }
+
+    void Close()
+    {
+        error = null;
+        message = null;
+        confirmRollback = false;
+        Migration.CloseRun();
+        LoadPreviousRuns();
+    }
+
+    void DownloadResults()
+    {
+        if (Run is null)
+            return;
+        var path = FileDialogs.SaveCsv("Save deployment results", $"Movewise deployment {Run.RunId}.csv");
+        if (path is null)
+            return;
+        error = null;
+        try
+        {
+            File.WriteAllText(path, DeployReportCsv.Write(Run));
+            message = $"Saved the results to {path}.";
+        }
+        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
+        {
+            message = null;
+            error = $"Couldn't save the results. If the file is open in Excel, close it and try again. ({ex.Message})";
+        }
+    }
+
+    void OpenFolder()
+    {
+        if (Run?.Folder is { } folder && Directory.Exists(folder))
+            Process.Start(new ProcessStartInfo("explorer.exe", $"\"{folder}\"") { UseShellExecute = true });
+    }
+
+    // "Creating…" and "Assigning…" only while the run is going; a run that was stopped or cut off shows where it got to.
+    string StatusText(DeployStep step) => step.Status switch
+    {
+        StepStatus.Pending => "Waiting",
+        StepStatus.Creating => step.Message is not null ? "Unknown" : Migration.IsBusy ? "Creating…" : "Interrupted",
+        StepStatus.Created => Migration.IsBusy ? "Assigning…" : "Created, not assigned",
+        StepStatus.Done => "Done",
+        StepStatus.Failed => "Failed",
+        StepStatus.Skipped => "Skipped",
+        StepStatus.RolledBack => "Rolled back",
+        _ => "Rollback failed",
+    };
+
+    static string StatusClass(DeployStep step) => step.Status switch
+    {
+        StepStatus.Done => "ok",
+        StepStatus.Failed or StepStatus.RollbackFailed => "bad",
+        StepStatus.Skipped => "warn",
+        StepStatus.Creating when step.Message is not null => "warn",
+        StepStatus.Creating or StepStatus.Created => "info",
+        _ => "neutral",
+    };
+
+    void OnStateChanged() => InvokeAsync(StateHasChanged);
+
+    public void Dispose() => State.Changed -= OnStateChanged;
+}

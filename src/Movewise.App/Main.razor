@@ -1,0 +1,10 @@
+<Router AppAssembly="@typeof(Main).Assembly">
+    <Found Context="routeData">
+        <RouteView RouteData="@routeData" DefaultLayout="@typeof(Shell)" />
+    </Found>
+    <NotFound>
+        <LayoutView Layout="@typeof(Shell)">
+            <div class="page"><div class="content"><p>This screen doesn't exist yet.</p></div></div>
+        </LayoutView>
+    </NotFound>
+</Router>

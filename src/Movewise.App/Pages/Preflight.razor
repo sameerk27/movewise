@@ -1,0 +1,383 @@
+@page "/preflight"
+@using System.IO
+@using Movewise.Core.Preflight
+@inject MigrationState State
+@inject MigrationService Migration
+@implements IDisposable
+
+<div class="page">
+    <header class="page-head">
+        <div class="head-row">
+            <div class="head-text">
+                <h1>Pre-flight checks</h1>
+                <p class="muted">A dry run against @DestinationName. Nothing has been written to either tenant.</p>
+            </div>
+            @if (Report is not null && !busy)
+            {
+                <span class="pill big @(Report.HasBlockers && !Report.BlockedSkipped ? "bad" : Report.HasBlockers || Report.WarningCount > 0 ? "warn" : "ok")">
+                    @(Report.HasBlockers
+                        ? Report.BlockedSkipped ? $"Ready · {Report.BlockedCount} blocked left out" : "Blocked · fix the issues below"
+                        : Report.WarningCount > 0 ? "Ready with warnings" : "Ready to deploy")
+                </span>
+            }
+        </div>
+        <StepBar Current="4" />
+    </header>
+
+    <div class="content">
+        @if (!State.ReadyToDiscover || State.Selected.Count == 0)
+        {
+            <div class="alert warn">Choose the policies to migrate first. <a href="discover">Go to Discover</a></div>
+        }
+        else if (busy)
+        {
+            <div class="card pad" role="status">@progress</div>
+        }
+        else if (error is not null)
+        {
+            <div class="alert bad" role="alert">@error</div>
+        }
+        else if (Report is not null)
+        {
+            if (fileError is not null)
+            {
+                <div class="alert bad" role="alert">@fileError</div>
+            }
+            if (message is not null)
+            {
+                <div class="alert ok" role="status">@message</div>
+            }
+
+            <div class="preflight">
+                <section class="stack gap">
+                    <div class="stats">
+                        <div class="card stat"><b>@Report.CreateCount</b><span class="muted">will be created</span></div>
+                        <div class="card stat"><b class="@(Report.SkipCount > 0 ? "warn-text" : "")">@Report.SkipCount</b><span class="muted">skipped or already there</span></div>
+                        <div class="card stat"><b class="@(Report.BlockedCount > 0 ? "bad-text" : "")">@Report.BlockedCount</b><span class="muted">blocked</span></div>
+                    </div>
+
+                    @if (Report.HasBlockers && Report.CreateCount > 0)
+                    {
+                        <div class="card pad skip-blocked">
+                            <label>
+                                <input type="checkbox" checked="@Report.BlockedSkipped" @onchange="@(e => SetSkipBlocked(e.Value is true))" />
+                                <span class="stack">
+                                    <b>Leave the @Report.BlockedCount blocked polic@(Report.BlockedCount == 1 ? "y" : "ies") out and deploy the other @Report.CreateCount</b>
+                                    <span class="muted small">The blocked ones aren't created. Fix their blockers later and run Movewise again to add them.</span>
+                                </span>
+                            </label>
+                        </div>
+                    }
+
+                    <div class="card findings">
+                        @if (Report.Findings.Count == 0)
+                        {
+                            <div class="finding">
+                                <span class="icon ok" aria-hidden="true"><Check /></span>
+                                <div class="stack"><b>No issues found</b><span class="muted small">Every selected policy can be created as it is.</span></div>
+                            </div>
+                        }
+                        @foreach (var finding in Report.Findings)
+                        {
+                            var expanded = expandedFindings.Contains(finding.Title);
+                            <div class="finding @SeverityClass(finding.Severity)">
+                                <span class="icon @SeverityClass(finding.Severity)" aria-hidden="true">@SeverityIcon(finding.Severity)</span>
+                                <div class="stack">
+                                    <b>@finding.Title</b>
+                                    <span class="muted small">@finding.Detail</span>
+                                    @if (finding.Items.Count > 0)
+                                    {
+                                        <ul class="small">
+                                            @foreach (var item in expanded ? finding.Items : finding.Items.Take(4))
+                                            {
+                                                <li>@item</li>
+                                            }
+                                        </ul>
+                                        @if (finding.Items.Count > 4)
+                                        {
+                                            <button class="btn link small" @onclick="@(() => ToggleFinding(finding.Title))">
+                                                @(expanded ? "Show fewer" : $"Show all {finding.Items.Count}")
+                                            </button>
+                                        }
+                                    }
+                                    @if (finding.Choice == FindingChoice.NameConflicts)
+                                    {
+                                        <div class="choice" role="radiogroup" aria-label="What to do with name conflicts">
+                                            <label><input type="radio" name="conflicts" checked="@(State.PreflightChoices.NameConflicts == ConflictChoice.Skip)" @onchange="@(() => SetConflictsAsync(ConflictChoice.Skip))" /> Skip them</label>
+                                            <label><input type="radio" name="conflicts" checked="@(State.PreflightChoices.NameConflicts == ConflictChoice.CreateWithSuffix)" @onchange="@(() => SetConflictsAsync(ConflictChoice.CreateWithSuffix))" /> Create with "(migrated)" added</label>
+                                        </div>
+                                    }
+                                    @if (finding.Choice == FindingChoice.RiskPoliciesWithoutP2)
+                                    {
+                                        <div class="choice" role="radiogroup" aria-label="What to do with risk-based policies">
+                                            <label><input type="radio" name="license" checked="@(State.PreflightChoices.RiskPoliciesWithoutP2 == LicenseChoice.CreateDisabled)" @onchange="@(() => SetLicenseAsync(LicenseChoice.CreateDisabled))" /> Create them switched off</label>
+                                            <label><input type="radio" name="license" checked="@(State.PreflightChoices.RiskPoliciesWithoutP2 == LicenseChoice.Skip)" @onchange="@(() => SetLicenseAsync(LicenseChoice.Skip))" /> Skip them</label>
+                                        </div>
+                                    }
+                                </div>
+                            </div>
+                        }
+                    </div>
+                </section>
+
+                <section class="card preview">
+                    <div class="stack">
+                        <label class="label" for="preview-policy">Preview a policy</label>
+                        <select id="preview-policy" class="input" @bind="previewKey">
+                            @foreach (var policy in Report.Policies)
+                            {
+                                <option value="@policy.Key">@OutcomeText(policy) · @PreflightCheck.ShownName(policy.Source)</option>
+                            }
+                        </select>
+                    </div>
+
+                    @if (Preview is { } preview)
+                    {
+                        <div class="stack">
+                            <span><span class="pill @OutcomeClass(preview.Outcome)">@OutcomeText(preview)</span> <span class="muted small">@preview.Source.Type.DisplayName</span></span>
+                            @foreach (var reason in preview.Reasons)
+                            {
+                                <span class="small">@reason</span>
+                            }
+                            @if (preview.Policy.Changes.Count > 0)
+                            {
+                                <ul class="small changes">
+                                    @foreach (var change in preview.Policy.Changes)
+                                    {
+                                        <li class="@(change.WidensPolicy ? "warn-text" : "")">@change.Description</li>
+                                    }
+                                </ul>
+                            }
+                        </div>
+
+                        @if (preview.Current is not null)
+                        {
+                            <span class="muted small">The destination's settings now (−) and after deploying (+). Only these change.</span>
+                        }
+                        <div class="diff mono" aria-label="@(preview.Current is null ? "Source settings compared with what will be created" : "Destination settings now compared with after deploying")">
+                            @foreach (var line in PreviewLines)
+                            {
+                                if (line.Collapsed > 0)
+                                {
+                                    <div class="diff-gap">… @line.Collapsed unchanged line@(line.Collapsed == 1 ? "" : "s")</div>
+                                }
+                                else
+                                {
+                                    <div class="diff-line @line.Css"><span class="diff-mark" aria-hidden="true">@line.Mark</span>@line.Text</div>
+                                }
+                            }
+                        </div>
+                    }
+                </section>
+            </div>
+        }
+    </div>
+
+    <footer class="page-foot">
+        <button class="btn ghost" disabled="@(Report is null || busy)" @onclick="DownloadReport">Download pre-flight report</button>
+        <div class="head-actions">
+            <a class="btn ghost" href="map">Back</a>
+            <button class="btn ghost" disabled="@busy" @onclick="RunAsync">Check again</button>
+            @if (Report is { CanDeploy: true } && !busy)
+            {
+                <a class="btn primary" href="deploy">Continue to deploy</a>
+            }
+            else
+            {
+                <button class="btn primary" disabled title="@(Report?.HasBlockers == true ? "Fix the blockers first, or leave the blocked policies out" : "Nothing to create")">Continue to deploy</button>
+            }
+        </div>
+    </footer>
+</div>
+
+@code {
+    record PreviewLine(string Text, string Css, string Mark, int Collapsed = 0);
+
+    const int Context = 2;
+
+    bool busy;
+    string progress = "";
+    string? error;
+    string? fileError;
+    string? message;
+    string previewKey = "";
+    readonly HashSet<string> expandedFindings = [];
+
+    PreflightReport? Report => State.Preflight;
+    string DestinationName => State.Destination?.Info.DisplayName ?? "the destination";
+    PolicyResult? Preview => Report?.Policies.FirstOrDefault(p => p.Key == previewKey);
+
+    /// <summary>Changed lines with a little context around them; long unchanged runs collapse.</summary>
+    IEnumerable<PreviewLine> PreviewLines
+    {
+        get
+        {
+            if (Preview is not { } preview)
+                yield break;
+
+            // Settings are changed, not created: the destination's values now against what they'll become.
+            var lines = preview.Current is { } current
+                ? LineDiff.Compare(
+                    Normalizer.ToStableJson(SettingsDiff.Only(current, preview.ChangedSettings)),
+                    Readable(Normalizer.ToStableJson(SettingsDiff.Only(preview.Policy.Desired, preview.ChangedSettings))))
+                : LineDiff.Compare(Normalizer.ToStableJson(preview.Source.Settings), Readable(Normalizer.ToStableJson(preview.Policy.Desired)));
+            var near = new bool[lines.Count];
+            for (var i = 0; i < lines.Count; i++)
+                if (lines[i].Kind != DiffKind.Same)
+                    for (var j = Math.Max(0, i - Context); j <= Math.Min(lines.Count - 1, i + Context); j++)
+                        near[j] = true;
+
+            var hidden = 0;
+            for (var i = 0; i < lines.Count; i++)
+            {
+                if (!near[i])
+                {
+                    hidden++;
+                    continue;
+                }
+                if (hidden > 0)
+                {
+                    yield return new PreviewLine("", "", "", hidden);
+                    hidden = 0;
+                }
+                yield return lines[i].Kind switch
+                {
+                    DiffKind.Removed => new PreviewLine(lines[i].Text, "removed", "−"),
+                    DiffKind.Added => new PreviewLine(lines[i].Text, "added", "+"),
+                    _ => new PreviewLine(lines[i].Text, "", " "),
+                };
+            }
+            if (hidden > 0)
+                yield return new PreviewLine("", "", "", hidden);
+        }
+    }
+
+    /// <summary>
+    /// Objects this migration creates have no ID yet, so the policy holds a stand-in for each. The preview names the
+    /// object instead, as the admin knows it.
+    /// </summary>
+    string Readable(string json) => System.Text.RegularExpressions.Regex.Replace(json, @"\{\{movewise:new:([^}]+)\}\}", m =>
+    {
+        var mapping = State.Mapping?.Items.FirstOrDefault(i => string.Equals(i.Key, m.Groups[1].Value, StringComparison.OrdinalIgnoreCase));
+        return mapping is null ? "(created by this migration)" : $"(new {MappingNames.Singular(mapping.TargetType).ToLowerInvariant()}: {mapping.Source.DisplayName})";
+    });
+
+    protected override async Task OnInitializedAsync()
+    {
+        State.Changed += OnStateChanged;
+        if (State.ReadyToDiscover && State.Selected.Count > 0)
+            await RunAsync();
+    }
+
+    async Task RunAsync()
+    {
+        busy = true;
+        error = null;
+        message = null;
+        progress = "Starting the dry run…";
+        try
+        {
+            await Migration.RunPreflightAsync(new Progress<string>(text =>
+            {
+                progress = text;
+                InvokeAsync(StateHasChanged);
+            }));
+
+            // Keep the previewed policy if it's still there; otherwise show the first one with changes.
+            if (Report is not null && Preview is null)
+                previewKey = (Report.Policies.FirstOrDefault(p => p.Policy.Changes.Count > 0) ?? Report.Policies.FirstOrDefault())?.Key ?? "";
+        }
+        catch (Exception ex)
+        {
+            error = $"The dry run couldn't finish. {ex.Message}";
+        }
+        finally
+        {
+            busy = false;
+        }
+    }
+
+    async Task SetConflictsAsync(ConflictChoice choice)
+    {
+        State.PreflightChoices = State.PreflightChoices with { NameConflicts = choice };
+        await RunAsync();
+    }
+
+    async Task SetLicenseAsync(LicenseChoice choice)
+    {
+        State.PreflightChoices = State.PreflightChoices with { RiskPoliciesWithoutP2 = choice };
+        await RunAsync();
+    }
+
+    // Only changes what's deployed, not the checks, so there's no need to run them again.
+    void SetSkipBlocked(bool skip)
+    {
+        State.PreflightChoices = State.PreflightChoices with { SkipBlocked = skip };
+        if (Report is not null)
+            State.SetPreflight(Report with { BlockedSkipped = skip });
+    }
+
+    void ToggleFinding(string title)
+    {
+        if (!expandedFindings.Remove(title))
+            expandedFindings.Add(title);
+    }
+
+    void DownloadReport()
+    {
+        if (Report is null)
+            return;
+        var path = FileDialogs.SaveCsv("Save pre-flight report", $"Movewise pre-flight {DateTime.Now:yyyy-MM-dd HHmm}.csv");
+        if (path is null)
+            return;
+        fileError = null;
+        try
+        {
+            File.WriteAllText(path, ReportCsv.Write(Report, State.Source?.Info.DisplayName ?? "", DestinationName));
+            message = $"Saved the report to {path}.";
+        }
+        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
+        {
+            message = null;
+            fileError = $"Couldn't save the report. If the file is open in Excel, close it and try again. ({ex.Message})";
+        }
+    }
+
+    static string SeverityClass(Severity severity) => severity switch
+    {
+        Severity.Blocker => "bad",
+        Severity.Warning => "warn",
+        _ => "info",
+    };
+
+    static string SeverityIcon(Severity severity) => severity switch
+    {
+        Severity.Blocker => "×",
+        Severity.Warning => "!",
+        _ => "i",
+    };
+
+    // Settings that exist in every tenant are changed, not created.
+    static string OutcomeText(PolicyResult policy) =>
+        policy.Outcome == Outcome.Create && policy.Source.Type.IsSettings ? "Change" : OutcomeText(policy.Outcome);
+
+    static string OutcomeText(Outcome outcome) => outcome switch
+    {
+        Outcome.Create => "Create",
+        Outcome.UseExisting => "Use existing",
+        Outcome.Skip => "Skip",
+        _ => "Blocked",
+    };
+
+    static string OutcomeClass(Outcome outcome) => outcome switch
+    {
+        Outcome.Create => "ok",
+        Outcome.UseExisting => "neutral",
+        Outcome.Skip => "warn",
+        _ => "bad",
+    };
+
+    void OnStateChanged() => InvokeAsync(StateHasChanged);
+
+    public void Dispose() => State.Changed -= OnStateChanged;
+}

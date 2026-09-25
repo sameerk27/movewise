@@ -1,0 +1,211 @@
+@inject MigrationService Migration
+@inject MigrationState State
+@implements IDisposable
+
+<section class="card tenant">
+    <div class="card-head">
+        <span class="label">@(IsSource ? "Source tenant" : "Destination tenant")</span>
+        @if (Connection is not null)
+        {
+            <span class="pills">
+                @if (Connection.IsDemo)
+                {
+                    <span class="pill info">Demo</span>
+                }
+                <span class="pill @(Connection.Roles.IsSufficient ? "ok" : "warn")">@(IsSource ? "Connected · read-only" : "Connected · read/write")</span>
+            </span>
+        }
+    </div>
+
+    @if (Connection is null)
+    {
+        <p class="muted">
+            @(IsSource
+                ? "The tenant you're moving policies from. Movewise only reads from it: it never sends a change there."
+                : "The tenant you're moving policies to. Sign in with an admin who can create policies there.")
+        </p>
+        @* No real sign-in while the demo is on: a real tenant is never paired with a demo one. *@
+        @if (!Migration.IsDemo)
+        {
+            <div>
+                <button class="btn primary" disabled="@(busy || Waiting || Migration.IsWorking)" @onclick="ConnectAsync">@(busy ? "Signing in…" : "Sign in")</button>
+            </div>
+        }
+        @if (busy && progress is not null)
+        {
+            <span class="small" role="status">@progress</span>
+        }
+        else if (Waiting)
+        {
+            <span class="muted small">Sign in to the destination first: that sets Movewise up.</span>
+        }
+        else if (!Migration.RegistrationIsManaged)
+        {
+            <span class="muted small">
+                @(IsSource
+                    ? "Use a Global Administrator the first time: Microsoft asks you once to approve Movewise here. The list includes the permissions Movewise uses in the destination; here, it only reads."
+                    : "Use a Global Administrator. Signing in here also sets Movewise up in this tenant (its app registration), the first time and whenever it needs repairing.")
+            </span>
+        }
+    }
+    else
+    {
+        var info = Connection.Info;
+        <div class="tenant-id">
+            <div class="tenant-name">@info.DisplayName</div>
+            <div class="mono muted">@info.InitialDomain · @Short(info.TenantId)</div>
+        </div>
+        <div class="kv"><span class="muted">Signed in as</span><span class="mono">@info.UserPrincipalName</span></div>
+        <div class="check @(Connection.Roles.IsSufficient ? "ok" : "warn")">
+            <div>@Connection.Roles.Summary</div>
+            @if (Connection.Roles.Missing.Count > 0)
+            {
+                <ul>
+                    @foreach (var role in Connection.Roles.Missing)
+                    {
+                        <li>@role</li>
+                    }
+                </ul>
+            }
+        </div>
+        <div class="pills">
+            @foreach (var sku in info.SkuPartNumbers.Take(6))
+            {
+                <span class="pill neutral">@sku</span>
+            }
+            @if (info.SkuPartNumbers.Count > 6)
+            {
+                <span class="pill neutral" title="@string.Join(", ", info.SkuPartNumbers.Skip(6))">+@(info.SkuPartNumbers.Count - 6) more</span>
+            }
+            @if (LicenseGap.Count > 0)
+            {
+                <span class="pill warn" title="@string.Join(", ", LicenseGap)">@LicenseGap.Count license@(LicenseGap.Count == 1 ? "" : "s") in the source but not here</span>
+            }
+        </div>
+        <div class="actions">
+            <button class="btn ghost" disabled="@checking" @onclick="CheckServicesAsync">
+                @(checking ? checkProgress : "Check services")
+            </button>
+            <button class="btn ghost" disabled="@Migration.IsWorking" title="@(Migration.IsWorking ? "Available once the deployment finishes" : null)" @onclick="DisconnectAsync">
+                @(Connection.IsDemo ? "Leave the demo" : "Sign out")
+            </button>
+        </div>
+        if (checks is not null)
+        {
+            <ul class="service-checks" aria-label="Service check results">
+                @foreach (var check in checks)
+                {
+                    <li class="@(check.Ok ? "ok" : "bad")">
+                        <span class="icon @(check.Ok ? "ok" : "bad")" aria-hidden="true">@(check.Ok ? "✓" : "×")</span>
+                        <span class="stack">
+                            <span><b>@check.Service</b> <span class="muted small">for @check.UsedFor</span></span>
+                            <span class="small @(check.Ok ? "muted" : "bad-text")">@check.Detail</span>
+                        </span>
+                    </li>
+                }
+            </ul>
+        }
+    }
+
+    @if (error is not null)
+    {
+        <div class="alert bad" role="alert">@error</div>
+    }
+</section>
+
+@code {
+    [Parameter, EditorRequired] public TenantRole Role { get; set; }
+
+    bool busy;
+    string? progress;
+    bool checking;
+    string checkProgress = "Checking…";
+    string? error;
+    IReadOnlyList<ServiceCheck>? checks;
+
+    bool IsSource => Role == TenantRole.Source;
+    TenantConnection? Connection => State.Get(Role);
+
+    /// <summary>The source waits for the destination, which sets Movewise up.</summary>
+    bool Waiting => IsSource && !Migration.CanSignInToSource;
+
+    IReadOnlyList<string> LicenseGap =>
+        !IsSource && State.Source is { } source && Connection is { } destination
+            ? source.Info.SkuPartNumbers.Except(destination.Info.SkuPartNumbers).ToList()
+            : [];
+
+    protected override void OnInitialized() => State.Changed += OnStateChanged;
+
+    void OnStateChanged() => InvokeAsync(StateHasChanged);
+
+    public void Dispose() => State.Changed -= OnStateChanged;
+
+    async Task ConnectAsync()
+    {
+        busy = true;
+        error = null;
+        checks = null;
+        try
+        {
+            await Migration.ConnectAsync(Role, new Progress<string>(text =>
+            {
+                progress = text;
+                InvokeAsync(StateHasChanged);
+            }));
+        }
+        catch (Exception ex) when (AuthService.IsUserCancel(ex))
+        {
+        }
+        catch (Exception ex)
+        {
+            error = AppRegistrationCreator.Describe(ex) ?? AuthService.DescribeRegistrationError(ex) ?? ex.Message;
+        }
+        finally
+        {
+            busy = false;
+            progress = null;
+        }
+    }
+
+    async Task DisconnectAsync()
+    {
+        error = null;
+        checks = null;
+        try
+        {
+            await Migration.DisconnectAsync(Role);
+        }
+        catch (Exception ex)
+        {
+            error = ex.Message;
+        }
+    }
+
+    async Task CheckServicesAsync()
+    {
+        checking = true;
+        error = null;
+        checks = null;
+        try
+        {
+            checks = await Migration.CheckServicesAsync(Role, new Progress<string>(text =>
+            {
+                checkProgress = text;
+                InvokeAsync(StateHasChanged);
+            }));
+        }
+        catch (Exception ex) when (AuthService.IsUserCancel(ex))
+        {
+        }
+        catch (Exception ex)
+        {
+            error = ex.Message;
+        }
+        finally
+        {
+            checking = false;
+        }
+    }
+
+    static string Short(string id) => id.Length > 12 ? $"{id[..4]}…{id[^4..]}" : id;
+}

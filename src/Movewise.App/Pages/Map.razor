@@ -1,0 +1,435 @@
+@page "/map"
+@using System.IO
+@inject MigrationState State
+@inject MigrationService Migration
+@implements IDisposable
+
+<div class="page">
+    <header class="page-head">
+        <div class="head-row">
+            <div class="head-text">
+                <h1>Map dependencies</h1>
+                <p class="muted">Policies point at groups, users, apps and other objects by ID. Match each one to its counterpart in @DestinationName.</p>
+            </div>
+            @if (Plan is not null && !busy)
+            {
+                <div class="head-actions">
+                    <button class="btn ghost" @onclick="ImportCsv">Import CSV</button>
+                    <button class="btn ghost" disabled="@(Plan.Items.Count == 0)" @onclick="ExportCsv">Export CSV</button>
+                    <button class="btn ghost" @onclick="BuildAsync">Match again</button>
+                </div>
+            }
+        </div>
+        <StepBar Current="3" />
+    </header>
+
+    <div class="content">
+        @if (!State.ReadyToDiscover || State.Selected.Count == 0)
+        {
+            <div class="alert warn">Choose the policies to migrate first. <a href="discover">Go to Discover</a></div>
+        }
+        else if (busy)
+        {
+            <div class="card pad" role="status">@progress</div>
+        }
+        else if (error is not null)
+        {
+            <div class="alert bad" role="alert">@error</div>
+        }
+        else if (Plan is not null)
+        {
+            if (fileError is not null)
+            {
+                <div class="alert bad" role="alert">@fileError</div>
+            }
+            if (message is not null)
+            {
+                <div class="alert @(messageProblems.Count > 0 ? "warn" : "ok")" role="status">
+                    @message
+                    @if (messageProblems.Count > 0)
+                    {
+                        <ul>
+                            @foreach (var problem in messageProblems.Take(10))
+                            {
+                                <li>@problem</li>
+                            }
+                        </ul>
+                    }
+                </div>
+            }
+
+            if (Plan.Items.Count == 0)
+            {
+                <div class="card pad">The selected policies don't point at any groups, users, apps or other objects. There's nothing to map.</div>
+            }
+            else
+            {
+                <div class="tabs" role="tablist" aria-label="Object types">
+                    @foreach (var type in Types)
+                    {
+                        var all = Plan.OfType(type).ToList();
+                        var resolved = all.Count(m => m.IsResolved);
+                        <button type="button" role="tab" id="tab-@type" class="tab @(type == tab ? "on" : "")" aria-selected="@(type == tab ? "true" : "false")"
+                                aria-controls="map-panel" tabindex="@(type == tab ? 0 : -1)" @ref="tabButtons[type]"
+                                @onclick="@(() => SelectTab(type))" @onkeydown="@(e => TabKeyAsync(e, type))">
+                            <b>@MappingNames.Plural(type)</b>
+                            <span class="@(resolved == all.Count ? "ok-text" : "warn-text")">@resolved of @all.Count matched</span>
+                        </button>
+                    }
+                </div>
+
+                <div class="map-body" role="tabpanel" id="map-panel" aria-labelledby="tab-@tab">
+                    <section class="card table map-table">
+                        <div class="row head">
+                            <span>In @SourceName</span><span></span><span>In @DestinationName</span><span>Match</span><span class="num">Used by</span>
+                        </div>
+                        @foreach (var mapping in Plan.OfType(tab))
+                        {
+                            var isSelected = selected?.Key == mapping.Key;
+                            <button type="button" class="row selectable @(isSelected ? "selected" : "") @(mapping.IsResolved ? "" : "unresolved")"
+                                    aria-pressed="@isSelected" @onclick="@(() => Select(mapping))">
+                                <span class="stack">
+                                    <span class="strong">@mapping.Source.DisplayName</span>
+                                    @if (mapping.Source.Detail is not null && mapping.Source.Detail != mapping.Source.DisplayName)
+                                    {
+                                        <span class="mono muted small">@mapping.Source.Detail</span>
+                                    }
+                                </span>
+                                <span class="muted" aria-hidden="true">→</span>
+                                <span class="stack">@DestinationText(mapping)</span>
+                                <span><span class="pill @PillClass(mapping.Kind)">@MappingNames.Describe(mapping.Kind)</span></span>
+                                <span class="num">@mapping.UsedBy.Count</span>
+                            </button>
+                        }
+                    </section>
+
+                    <aside class="card side" aria-label="Selected object">
+                        @if (selected is null)
+                        {
+                            <p class="muted">Select a row to change how it's matched.</p>
+                        }
+                        else
+                        {
+                            <div class="stack">
+                                <span class="label">@MappingNames.Singular(selected.TargetType)</span>
+                                <span class="side-title">@selected.Source.DisplayName</span>
+                                @if (selected.Source.Detail is not null)
+                                {
+                                    <span class="mono muted small">@selected.Source.Detail</span>
+                                }
+                            </div>
+
+                            @if (selected.Note is not null)
+                            {
+                                <div class="check warn">@selected.Note</div>
+                            }
+
+                            <div class="stack">
+                                <span class="small strong">Used by @selected.UsedBy.Count @(selected.UsedBy.Count == 1 ? "policy" : "policies")</span>
+                                @foreach (var policy in selected.UsedBy.Take(6))
+                                {
+                                    <span class="small muted">@policy</span>
+                                }
+                                @if (selected.UsedBy.Count > 6)
+                                {
+                                    <span class="small muted">and @(selected.UsedBy.Count - 6) more</span>
+                                }
+                            </div>
+
+                            <div class="stack">
+                                <span class="small strong">In @DestinationName</span>
+                                <span><span class="pill @PillClass(selected.Kind)">@MappingNames.Describe(selected.Kind)</span> @DestinationText(selected)</span>
+                            </div>
+
+                            <div class="stack">
+                                <label class="small strong" for="map-search">Match to an existing @MappingNames.Singular(selected.TargetType).ToLowerInvariant()</label>
+                                <div class="search-row">
+                                    <input id="map-search" class="input" @bind="searchText" @bind:event="oninput" @onkeydown="SearchOnEnter" placeholder="Start of the name" />
+                                    <button class="btn ghost" disabled="@searching" @onclick="SearchAsync">@(searching ? "Searching…" : "Search")</button>
+                                </div>
+                                @if (results is not null)
+                                {
+                                    <div class="results">
+                                        @if (results.Count == 0)
+                                        {
+                                            <span class="small muted">Nothing in @DestinationName starts with that.</span>
+                                        }
+                                        @foreach (var result in results)
+                                        {
+                                            <button type="button" class="result" @onclick="@(() => Choose(result))">
+                                                <span class="strong">@result.DisplayName</span>
+                                                @if (result.Detail is not null)
+                                                {
+                                                    <span class="mono muted small">@result.Detail</span>
+                                                }
+                                            </button>
+                                        }
+                                    </div>
+                                }
+                            </div>
+
+                            <div class="stack">
+                                @if (selected.CanCreate)
+                                {
+                                    <button class="btn ghost" disabled="@(selected.Kind == MatchKind.CreateInDestination)" @onclick="CreateAsync">
+                                        @(selected.TargetType == ResourceRegistry.Group ? "Create this group in the destination" : "Create it with the policies")
+                                    </button>
+                                }
+                                <button class="btn ghost" disabled="@(selected.Kind == MatchKind.RemoveFromPolicies)" @onclick="Remove">Remove from the policies</button>
+                                <span class="small muted">Removing an excluded group, user or address widens who a policy applies to. Pre-flight will flag it.</span>
+                                @if (selected.IsDecision)
+                                {
+                                    <button class="btn link" @onclick="Clear">Undo my choice</button>
+                                }
+                            </div>
+                        }
+                    </aside>
+                </div>
+            }
+        }
+    </div>
+
+    <footer class="page-foot">
+        <span class="@(UnresolvedCount > 0 ? "warn-text" : "muted")">
+            @(Plan is null ? "" : UnresolvedCount > 0 ? $"{UnresolvedCount} still unresolved. Pre-flight will block the policies that use them." : "Everything is matched.")
+        </span>
+        <div class="head-actions">
+            <a class="btn ghost" href="discover">Back</a>
+            <a class="btn primary @(Plan is null || busy ? "disabled" : "")" href="preflight" aria-disabled="@(Plan is null || busy)">
+                Run pre-flight checks
+                <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M5 12h14M13 6l6 6-6 6"></path></svg>
+            </a>
+        </div>
+    </footer>
+</div>
+
+@code {
+    bool busy;
+    bool searching;
+    string progress = "";
+    string? error;
+    string? fileError;
+    string? message;
+    IReadOnlyList<string> messageProblems = [];
+    string tab = "";
+    Mapping? selected;
+    string searchText = "";
+    IReadOnlyList<ObjectRef>? results;
+
+    MappingPlan? Plan => State.Mapping;
+    int UnresolvedCount => Plan?.UnresolvedCount ?? 0;
+    string SourceName => State.Source?.Info.DisplayName ?? "the source";
+    string DestinationName => State.Destination?.Info.DisplayName ?? "the destination";
+    // The usual kinds in their usual order, then any other kind a policy points at (such as notification templates).
+    IEnumerable<string> Types => MappingNames.Order
+        .Concat((Plan?.Items.Select(m => m.TargetType) ?? []).Distinct().Where(t => !MappingNames.Order.Contains(t)).Order())
+        .Where(t => Plan?.OfType(t).Any() == true);
+
+    protected override async Task OnInitializedAsync()
+    {
+        State.Changed += OnStateChanged;
+        if (State.ReadyToDiscover && State.Selected.Count > 0 && !State.MappingIsCurrent)
+            await BuildAsync();
+        else
+            PickTab();
+    }
+
+    async Task BuildAsync()
+    {
+        busy = true;
+        error = null;
+        message = null;
+        progress = "Matching objects in the destination…";
+        try
+        {
+            await Migration.BuildMappingAsync(new Progress<string>(text =>
+            {
+                progress = text;
+                InvokeAsync(StateHasChanged);
+            }));
+        }
+        catch (Exception ex)
+        {
+            error = $"Couldn't match objects in the destination. {ex.Message}";
+        }
+        finally
+        {
+            busy = false;
+        }
+
+        // The plan was rebuilt, so point at the new copy of whatever was selected.
+        selected = selected is null ? null : Plan?.Find(selected.TargetType, selected.Source.Id);
+        PickTab();
+    }
+
+    void PickTab()
+    {
+        if (Plan is null || Types.Contains(tab))
+            return;
+        tab = Types.FirstOrDefault(t => Plan.OfType(t).Any(m => !m.IsResolved)) ?? Types.FirstOrDefault() ?? "";
+    }
+
+    void SelectTab(string type)
+    {
+        tab = type;
+        selected = null;
+        results = null;
+    }
+
+    readonly Dictionary<string, ElementReference> tabButtons = [];
+
+    /// <summary>Arrow keys, Home and End move between the tabs, as in any tab list.</summary>
+    async Task TabKeyAsync(KeyboardEventArgs e, string type)
+    {
+        var types = Types.ToList();
+        var at = types.IndexOf(type);
+        var next = e.Key switch
+        {
+            "ArrowRight" => types[(at + 1) % types.Count],
+            "ArrowLeft" => types[(at - 1 + types.Count) % types.Count],
+            "Home" => types[0],
+            "End" => types[^1],
+            _ => null,
+        };
+        if (next is null)
+            return;
+        SelectTab(next);
+        StateHasChanged();
+        if (tabButtons.TryGetValue(next, out var button))
+            await button.FocusAsync();
+    }
+
+    void Select(Mapping mapping)
+    {
+        selected = mapping;
+        searchText = mapping.Source.DisplayName;
+        results = null;
+    }
+
+    async Task SearchOnEnter(KeyboardEventArgs e)
+    {
+        if (e.Key == "Enter")
+            await SearchAsync();
+    }
+
+    async Task SearchAsync()
+    {
+        if (selected is null)
+            return;
+        searching = true;
+        try
+        {
+            results = await Migration.SearchDestinationAsync(selected.TargetType, searchText);
+        }
+        catch (Exception ex)
+        {
+            results = null;
+            message = $"Search failed. {ex.Message}";
+            messageProblems = [];
+        }
+        finally
+        {
+            searching = false;
+        }
+    }
+
+    void Choose(ObjectRef destination)
+    {
+        selected?.MapTo(destination);
+        results = null;
+        State.NotifyChanged();
+    }
+
+    async Task CreateAsync()
+    {
+        if (selected is null)
+            return;
+        Migration.CreateInDestination(selected);
+        // Creating a location, strength, filter or scope tag adds it to the migration, and it may point at more objects.
+        if (!State.MappingIsCurrent)
+            await BuildAsync();
+    }
+
+    void Remove()
+    {
+        selected?.RemoveFromPolicies();
+        State.NotifyChanged();
+    }
+
+    void Clear()
+    {
+        selected?.Clear();
+        State.NotifyChanged();
+    }
+
+    void ExportCsv()
+    {
+        if (Plan is null)
+            return;
+        var path = FileDialogs.SaveCsv("Export mapping", $"Movewise mapping {DateTime.Now:yyyy-MM-dd}.csv");
+        if (path is null)
+            return;
+        fileError = null;
+        try
+        {
+            File.WriteAllText(path, MappingCsv.Write(Plan));
+        }
+        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
+        {
+            fileError = $"Couldn't save the mapping. If the file is open in Excel, close it and try again. ({ex.Message})";
+            return;
+        }
+        message = $"Saved the mapping to {path}.";
+        messageProblems = [];
+    }
+
+    void ImportCsv()
+    {
+        if (Plan is null)
+            return;
+        var path = FileDialogs.OpenCsv("Import mapping");
+        if (path is null)
+            return;
+        fileError = null;
+        string text;
+        try
+        {
+            text = File.ReadAllText(path);
+        }
+        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
+        {
+            fileError = $"Couldn't open {Path.GetFileName(path)}. If it's open in Excel, close it and try again. ({ex.Message})";
+            return;
+        }
+        var result = MappingCsv.Read(Plan, text);
+        message = $"Applied {result.Applied} decision{(result.Applied == 1 ? "" : "s")} from {Path.GetFileName(path)}."
+            + (result.Problems.Count > 0 ? $" {result.Problems.Count} row{(result.Problems.Count == 1 ? " was" : "s were")} skipped:" : "");
+        messageProblems = result.Problems;
+        State.NotifyChanged();
+    }
+
+    static string DestinationText(Mapping mapping) => mapping.Kind switch
+    {
+        MatchKind.Unresolved => "Choose a match…",
+        MatchKind.RemoveFromPolicies => "Removed from the policies",
+        MatchKind.CreatedByMigration => $"New: {mapping.Source.DisplayName} (migrated with the policies)",
+        MatchKind.CreateInDestination => $"New: {mapping.Source.DisplayName}",
+        MatchKind.External => "Kept as it is (outside the source tenant)",
+        // Domains, addresses and sites are named by themselves, so show the new one.
+        _ when mapping.TargetType is ResourceRegistry.Domain or ResourceRegistry.Recipient or ResourceRegistry.Site => mapping.Destination?.Id ?? "",
+        _ => mapping.Destination?.DisplayName ?? "",
+    };
+
+    static string PillClass(MatchKind kind) => kind switch
+    {
+        MatchKind.Unresolved => "bad",
+        MatchKind.RemoveFromPolicies => "warn",
+        MatchKind.Manual => "info",
+        MatchKind.CreateInDestination or MatchKind.CreatedByMigration or MatchKind.External => "neutral",
+        _ => "ok",
+    };
+
+    void OnStateChanged() => InvokeAsync(StateHasChanged);
+
+    public void Dispose() => State.Changed -= OnStateChanged;
+}

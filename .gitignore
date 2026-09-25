@@ -1,0 +1,9 @@
+bin/
+obj/
+.vs/
+*.user
+TestResults/
+
+# Downloaded by tools/Save-Modules.ps1
+src/Movewise.App/Modules/
+artifacts/

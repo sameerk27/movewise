@@ -1,0 +1,52 @@
+<Project Sdk="Microsoft.NET.Sdk.Razor">
+
+  <PropertyGroup>
+    <OutputType>WinExe</OutputType>
+    <TargetFramework>net8.0-windows</TargetFramework>
+    <UseWPF>true</UseWPF>
+    <Nullable>enable</Nullable>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <RootNamespace>Movewise.App</RootNamespace>
+    <AssemblyName>Movewise</AssemblyName>
+    <Product>Movewise</Product>
+    <!-- Set by tools\Publish.ps1 for releases. -->
+    <Version>0.1.0</Version>
+    <!-- Program.Main starts the app, so the installer and updater (Velopack) can run first. -->
+    <StartupObject>Movewise.App.Program</StartupObject>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <PackageReference Include="Microsoft.AspNetCore.Components.WebView.Wpf" Version="8.0.100" />
+    <PackageReference Include="Velopack" Version="1.2.158" />
+  </ItemGroup>
+
+  <!--
+    The bundled Exchange and Teams modules run inside this process, and .NET loads only one version of each
+    assembly. These must be at least the highest version any bundled module ships (ExchangeOnlineManagement 3.10.1
+    ships 8.19.2), or the module fails with "Could not load file or assembly". Check them when updating a module.
+  -->
+  <ItemGroup>
+    <PackageReference Include="Microsoft.IdentityModel.Abstractions" Version="8.19.2" />
+    <PackageReference Include="Microsoft.IdentityModel.JsonWebTokens" Version="8.19.2" />
+    <PackageReference Include="Microsoft.IdentityModel.Logging" Version="8.19.2" />
+    <PackageReference Include="Microsoft.IdentityModel.Tokens" Version="8.19.2" />
+    <PackageReference Include="System.IdentityModel.Tokens.Jwt" Version="8.19.2" />
+  </ItemGroup>
+
+  <!-- App.xaml is a plain page: Program.Main creates the application. -->
+  <ItemGroup>
+    <ApplicationDefinition Remove="App.xaml" />
+    <Page Include="App.xaml" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="..\Movewise.M365\Movewise.M365.csproj" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <None Update="appsettings.json" CopyToOutputDirectory="PreserveNewest" />
+    <!-- PowerShell modules downloaded by tools\Save-Modules.ps1 ship inside the app. -->
+    <None Update="Modules\**\*" CopyToOutputDirectory="PreserveNewest" />
+  </ItemGroup>
+
+</Project>

@@ -1,0 +1,291 @@
+@page "/discover"
+@using System.Diagnostics
+@using System.Text.Json.Nodes
+@inject MigrationState State
+@inject MigrationService Migration
+@inject NavigationManager Nav
+@implements IDisposable
+
+<div class="page">
+    <header class="page-head">
+        <div class="head-row">
+            <div class="head-text">
+                <h1>Choose policies to migrate</h1>
+                <p class="muted">Everything Movewise found in @(State.Source?.Info.DisplayName ?? "the source tenant"), and what each policy depends on.</p>
+            </div>
+            @if (State.ReadyToDiscover)
+            {
+                <div class="head-actions">
+                    <button class="btn ghost" disabled="@busy" @onclick="ReadAsync">Read again</button>
+                    <button class="btn ghost" disabled="@(busy || State.Selected.Count == 0)" @onclick="SaveAsync">Save export to disk</button>
+                </div>
+            }
+        </div>
+        <StepBar Current="2" />
+    </header>
+
+    <div class="content">
+        @if (!State.ReadyToDiscover)
+        {
+            <div class="alert warn">Connect both tenants first. <a href="">Go to Connect</a></div>
+        }
+        else if (busy)
+        {
+            <div class="card pad" role="status">@progress</div>
+        }
+        else if (error is not null)
+        {
+            <div class="alert bad" role="alert">@error</div>
+        }
+        else
+        {
+            if (State.SavedExportFolder is not null)
+            {
+                <div class="alert ok">
+                    Saved @State.Selected.Count policies to <span class="mono">@State.SavedExportFolder</span>
+                    <button class="btn link" @onclick="OpenFolder">Open folder</button>
+                </div>
+            }
+
+            if (State.ExportWarnings.Count > 0)
+            {
+                <div class="alert warn" role="alert">
+                    <b>Some policy types couldn't be read, so they're missing from this list.</b>
+                    <ul>
+                        @foreach (var warning in State.ExportWarnings)
+                        {
+                            <li>@warning.Type.PluralName: @warning.Message</li>
+                        }
+                    </ul>
+                </div>
+            }
+
+            <div class="stats">
+                <div class="card stat"><b>@State.Exported.Count</b><span class="muted">policies found</span></div>
+                <div class="card stat"><b>@State.Selected.Count</b><span class="muted">selected</span></div>
+                <div class="card stat"><b class="warn-text">@NeedsMappingCount</b><span class="muted">need dependency mapping</span></div>
+            </div>
+
+            <div class="chips" role="group" aria-label="Filter by service">
+                <button class="chip @(filter is null ? "on" : "")" aria-pressed="@(filter is null)" @onclick="@(() => filter = null)">
+                    All <span>@State.Exported.Count</span>
+                </button>
+                @foreach (var service in MigrationService.Supported)
+                {
+                    var count = State.Exported.Count(e => e.Type.Service == service);
+                    <button class="chip @(filter == service ? "on" : "")" aria-pressed="@(filter == service)" @onclick="@(() => filter = service)">
+                        @ServiceName(service) <span>@count</span>
+                    </button>
+                }
+            </div>
+
+            <section class="card table">
+                <div class="row head">
+                    <span><input type="checkbox" aria-label="Select all shown" checked="@AllSelected" @onchange="ToggleAll" /></span>
+                    <span>Policy</span><span>Type</span><span>State</span><span>Depends on</span><span>Status</span>
+                </div>
+                @if (!Visible.Any())
+                {
+                    <div class="empty muted">No policies of the supported types were found in the source tenant.</div>
+                }
+                @foreach (var item in Visible)
+                {
+                    var key = MigrationState.Key(item);
+                    var needsMapping = ExportAnalysis.NeedsMapping(item, State.Exported);
+                    <div class="row">
+                        <span><input type="checkbox" aria-label="Select @item.DisplayName" checked="@State.Selected.Contains(key)" @onchange="@(e => Toggle(key, e))" /></span>
+                        <span class="strong">@item.DisplayName</span>
+                        <span class="muted">@item.Type.DisplayName</span>
+                        <span class="muted">@PolicyState(item)</span>
+                        <span class="muted">@ExportAnalysis.DescribeDependencies(item)</span>
+                        <span><span class="pill @(needsMapping ? "warn" : "ok")">@(needsMapping ? "Needs mapping" : "Ready")</span></span>
+                    </div>
+                }
+            </section>
+
+            <section class="card pad" style="margin-top: 18px">
+                <div class="head-row">
+                    <div><h2>Set up by hand</h2><p class="muted">These source settings need to be recreated in the destination after deployment.</p></div>
+                    <button class="btn ghost" disabled="@(State.ManualSetup.Count == 0)" @onclick="DownloadManualSetup">Download report</button>
+                </div>
+                @if (State.ManualSetupWarnings.Count > 0)
+                {
+                    <div class="alert warn" role="alert"><b>Some hand-setup details couldn't be read.</b><ul>@foreach (var warning in State.ManualSetupWarnings) { <li>@warning</li> }</ul></div>
+                }
+                @if (State.ManualSetup.Count == 0)
+                {
+                    <p class="muted">No connectors or DKIM domains were returned, or Exchange Online couldn't be read.</p>
+                }
+                else
+                {
+                    <div class="row head" style="grid-template-columns: 1fr 1.2fr 2fr"><span>Area</span><span>Name</span><span>Details</span></div>
+                    @foreach (var item in State.ManualSetup)
+                    {
+                        <div class="row" style="grid-template-columns: 1fr 1.2fr 2fr"><span>@item.Area</span><span class="strong">@item.Name</span><span class="muted">@item.Details</span></div>
+                    }
+                }
+            </section>
+        }
+    </div>
+
+    <footer class="page-foot">
+        <span class="muted">@State.Selected.Count of @State.Exported.Count selected</span>
+        <div class="head-actions">
+            <a class="btn ghost" href="">Back</a>
+            <button class="btn primary" disabled="@(busy || State.Selected.Count == 0)" @onclick="@(() => Nav.NavigateTo("map"))">
+                Map dependencies
+                <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M5 12h14M13 6l6 6-6 6"></path></svg>
+            </button>
+        </div>
+    </footer>
+</div>
+
+@code {
+    bool busy;
+    string progress = "";
+    string? error;
+
+    M365Service? filter;
+
+    IEnumerable<ExportedResource> Visible =>
+        filter is null ? State.Exported : State.Exported.Where(e => e.Type.Service == filter);
+
+    int NeedsMappingCount => State.Exported.Count(e => ExportAnalysis.NeedsMapping(e, State.Exported));
+    bool AllSelected => Visible.Any() && Visible.All(e => State.Selected.Contains(MigrationState.Key(e)));
+
+    static string ServiceName(M365Service service) => service switch
+    {
+        M365Service.Entra => "Entra ID",
+        M365Service.Defender => "Defender for Office 365",
+        M365Service.Exchange => "Exchange Online",
+        M365Service.SharePoint => "SharePoint and OneDrive",
+        M365Service.DefenderEndpoint => "Defender for Endpoint",
+        _ => service.ToString(),
+    };
+
+    protected override async Task OnInitializedAsync()
+    {
+        State.Changed += OnStateChanged;
+        if (State.ReadyToDiscover && State.Exported.Count == 0)
+            await ReadAsync();
+    }
+
+    async Task ReadAsync()
+    {
+        busy = true;
+        error = null;
+        progress = "Connecting to the source tenant…";
+        try
+        {
+            await Migration.DiscoverAsync(new Progress<string>(message =>
+            {
+                progress = message;
+                InvokeAsync(StateHasChanged);
+            }));
+        }
+        catch (Exception ex)
+        {
+            error = $"Couldn't read policies from the source tenant. {ex.Message}";
+        }
+        finally
+        {
+            busy = false;
+        }
+    }
+
+    async Task SaveAsync()
+    {
+        error = null;
+        try
+        {
+            await Migration.SaveExportAsync();
+        }
+        catch (Exception ex)
+        {
+            error = $"Couldn't save the export. {ex.Message}";
+        }
+    }
+
+    void Toggle(string key, ChangeEventArgs e)
+    {
+        if (e.Value is true)
+            State.Selected.Add(key);
+        else
+            State.Selected.Remove(key);
+        State.NotifyChanged();
+    }
+
+    void ToggleAll(ChangeEventArgs e)
+    {
+        var keys = Visible.Select(MigrationState.Key).ToList();
+        if (e.Value is true)
+            State.Selected.UnionWith(keys);
+        else
+            State.Selected.ExceptWith(keys);
+        State.NotifyChanged();
+    }
+
+    void OpenFolder()
+    {
+        if (State.SavedExportFolder is { } folder)
+            Process.Start(new ProcessStartInfo("explorer.exe", $"\"{folder}\"") { UseShellExecute = true });
+    }
+
+    void DownloadManualSetup()
+    {
+        var path = FileDialogs.SaveCsv("Save set-up-by-hand report", $"Movewise manual setup {DateTime.Now:yyyy-MM-dd HHmm}.csv");
+        if (path is null) return;
+        static string Csv(string value) => "\"" + value.Replace("\"", "\"\"") + "\"";
+        var lines = new List<string> { "Area,Name,Details" };
+        lines.AddRange(State.ManualSetup.Select(item => string.Join(",", Csv(item.Area), Csv(item.Name), Csv(item.Details))));
+        lines.AddRange(State.ManualSetupWarnings.Select(warning => string.Join(",", Csv("Read warning"), Csv(""), Csv(warning))));
+        System.IO.File.WriteAllLines(path, lines, System.Text.Encoding.UTF8);
+    }
+
+    static string PolicyState(ExportedResource item)
+    {
+        var settings = item.Settings;
+        if (Text(settings, "state") is { } state)
+        {
+            return state switch
+            {
+                "enabled" => "On",
+                "disabled" => "Off",
+                "enabledForReportingButNotEnforced" => "Report-only",
+                _ => state,
+            };
+        }
+
+        // PowerShell policies: switched on or off, and for mail flow rules and DLP a mode. Defender policies are
+        // switched on and off by their rule; Teams policies do nothing until they're assigned.
+        var enabled = Flag(settings, "Enabled")
+            ?? (settings["rules"] as JsonArray)?.OfType<JsonObject>().Select(r => Flag(r, "Enabled")).FirstOrDefault(f => f is not null);
+        if (enabled == false)
+            return "Off";
+        if (Text(settings, "Mode") is { } mode)
+        {
+            return mode switch
+            {
+                "Enforce" or "Enable" => "On",
+                "Audit" or "AuditAndNotify" or "TestWithNotifications" or "TestWithoutNotifications" => "Test mode",
+                "Disable" => "Off",
+                _ => mode,
+            };
+        }
+        if (enabled == true)
+            return "On";
+        if (item.Type.TeamsPolicyType is not null)
+            return settings["groupAssignments"] is JsonArray { Count: > 0 } groups ? $"{groups.Count} group{(groups.Count == 1 ? "" : "s")}" : "Not assigned";
+        return "—";
+
+        static string? Text(JsonObject obj, string name) =>
+            obj[name] is JsonValue value && value.TryGetValue<string>(out var text) && text.Length > 0 ? text : null;
+
+        static bool? Flag(JsonObject obj, string name) =>
+            obj[name] is JsonValue value && value.TryGetValue<bool>(out var flag) ? flag : null;
+    }
+
+    void OnStateChanged() => InvokeAsync(StateHasChanged);
+
+    public void Dispose() => State.Changed -= OnStateChanged;
+}

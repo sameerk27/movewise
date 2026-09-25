@@ -1,0 +1,40 @@
+<nav class="steps" aria-label="Migration steps">
+    @for (var i = 0; i < Steps.Length; i++)
+    {
+        var (name, href) = Steps[i];
+        var number = i + 1;
+        var css = number < Current ? "step done" : number == Current ? "step cur" : "step";
+
+        if (i > 0)
+        {
+            <span class="bar @(number <= Current ? "done" : "")"></span>
+        }
+
+        if (href is not null && number <= Current)
+        {
+            <a class="@css" href="@href" aria-current="@(number == Current ? "step" : null)">
+                <span class="dot">@if (number < Current) { <Check /> } else { @number }</span>@name
+            </a>
+        }
+        else
+        {
+            <span class="@css" aria-disabled="true">
+                <span class="dot">@number</span>@name
+            </span>
+        }
+    }
+</nav>
+
+@code {
+    [Parameter, EditorRequired] public int Current { get; set; }
+
+    // A step links back only once it's been reached.
+    static readonly (string Name, string? Href)[] Steps =
+    [
+        ("Connect", ""),
+        ("Discover", "discover"),
+        ("Map dependencies", "map"),
+        ("Pre-flight", "preflight"),
+        ("Deploy", "deploy"),
+    ];
+}

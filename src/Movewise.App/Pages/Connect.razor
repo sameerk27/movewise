@@ -1,0 +1,123 @@
+@page "/"
+@inject MigrationState State
+@inject MigrationService Migration
+@inject MovewiseOptions Options
+@inject NavigationManager Nav
+@implements IDisposable
+
+<div class="page">
+    <header class="page-head">
+        <div class="head-row">
+            <div class="head-text">
+                <h1>Connect source and destination</h1>
+                <p class="muted">Sign in to the destination first, then the source, each with an admin account that belongs to that tenant. No policies change in either tenant until you deploy.</p>
+            </div>
+        </div>
+        <StepBar Current="1" />
+    </header>
+
+    <div class="content">
+        @if (IsDemo)
+        {
+            <div class="demo-banner" role="status">
+                <span><b>You're using the demo tenants.</b> Contoso and Fabrikam are made up and live only inside Movewise: deploying and rolling back change nothing real.</span>
+                <button class="btn ghost small-btn" disabled="@Migration.IsWorking" @onclick="LeaveDemoAsync">Leave the demo</button>
+            </div>
+        }
+        else
+        {
+            @* The app registration is set up during the destination sign-in. Only gaps are shown here. *@
+            @if (Migration.LastSetup is { Notes.Count: > 0 } setup)
+            {
+                <div class="alert warn" role="status">
+                    <b>Movewise is set up in @setup.Tenant, with some gaps:</b>
+                    <ul>
+                        @foreach (var note in setup.Notes)
+                        {
+                            <li>@note</li>
+                        }
+                    </ul>
+                </div>
+            }
+            @if (State.Source is null && State.Destination is null)
+            {
+                <div class="demo-offer">
+                    <div class="stack">
+                        <b>No tenants to hand?</b>
+                        <span class="muted small">Try Movewise with two built-in demo tenants, Contoso and Fabrikam. Every step works, including deploying and rolling back, and nothing leaves this PC. No app registration needed.</span>
+                    </div>
+                    <button class="btn ghost" disabled="@Migration.IsWorking" @onclick="StartDemoAsync">Try the demo</button>
+                </div>
+            }
+        }
+
+        <div class="tenants">
+            <TenantCard Role="TenantRole.Source" />
+            <div class="arrow" aria-hidden="true">
+                <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M5 12h14M13 6l6 6-6 6"></path></svg>
+            </div>
+            <TenantCard Role="TenantRole.Destination" />
+        </div>
+
+        <section class="card">
+            <div class="card-head">
+                <h2>What this build can migrate</h2>
+                <span class="muted small">Built-in and default policies stay as they are in the destination.</span>
+            </div>
+            <div class="services">
+                @foreach (var service in Services)
+                {
+                    var ready = MigrationService.Supported.Contains(service.Service);
+                    <div class="service @(ready ? "on" : "")">
+                        <b>@service.Name</b>
+                        <span class="muted small">@service.What</span>
+                        <span class="pill @(ready ? "ok" : "neutral")">@(ready ? "Included" : "Coming later")</span>
+                    </div>
+                }
+            </div>
+        </section>
+    </div>
+
+    <footer class="page-foot">
+        <span class="muted">@FooterHint</span>
+        <button class="btn primary" disabled="@(!State.ReadyToDiscover)" @onclick="@(() => Nav.NavigateTo("discover"))">
+            Discover policies
+            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M5 12h14M13 6l6 6-6 6"></path></svg>
+        </button>
+    </footer>
+</div>
+
+@code {
+    record ServiceInfo(M365Service Service, string Name, string What);
+
+    static readonly ServiceInfo[] Services =
+    [
+        new(M365Service.Entra, "Entra ID", "Conditional Access, named locations, authentication strengths; user settings and sign-in methods"),
+        new(M365Service.Intune, "Intune", "Settings catalog, device configuration, compliance, app protection, Autopilot, filters, scope tags"),
+        new(M365Service.Purview, "Purview", "DLP and retention policies, sensitivity labels and label policies, Endpoint DLP settings"),
+        new(M365Service.Defender, "Defender for Office 365", "Anti-phishing, anti-spam, anti-malware, Safe Links, Safe Attachments, quarantine policies, Tenant Allow/Block List; the default policies, preset security policies and tenant-wide settings"),
+        new(M365Service.Exchange, "Exchange Online", "Mail flow rules, journal rules, remote domains, Outlook on the web policies, mailbox retention tags and policies, mobile device mailbox policies, and their defaults"),
+        new(M365Service.Teams, "Teams", "Meeting, messaging, calling, app setup and permission, channels and update policies, with their group assignments; org-wide policies, external and guest access, meeting settings"),
+        new(M365Service.SharePoint, "SharePoint and OneDrive", "Sharing, sync and site creation settings"),
+        new(M365Service.DefenderEndpoint, "Defender for Endpoint", "Indicators (blocked or allowed files, IPs, URLs and certificates), custom detection rules"),
+    ];
+
+    string FooterHint =>
+        State.Source is not null && State.Destination is not null ? (IsDemo ? "Both demo tenants are connected." : "Both tenants are connected. Nothing has been changed.")
+        : State.Destination is null && !Migration.RegistrationIsManaged ? "Sign in to the destination tenant first: that sets Movewise up."
+        : State.Destination is null ? "Sign in to the destination tenant to continue."
+        : "Now sign in to the source tenant.";
+
+    bool IsDemo => Migration.IsDemo;
+
+    Task StartDemoAsync() => Migration.ConnectDemoAsync();
+
+    // Signing out of either demo tenant leaves the demo altogether.
+    Task LeaveDemoAsync() => Migration.DisconnectAsync(TenantRole.Destination);
+
+    protected override void OnInitialized() => State.Changed += OnStateChanged;
+
+    void OnStateChanged() => InvokeAsync(StateHasChanged);
+
+    public void Dispose() => State.Changed -= OnStateChanged;
+}
