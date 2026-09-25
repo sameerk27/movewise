@@ -45,3 +45,7 @@ The version must go up with every release, or installed copies won't see it.
 ```
 
 This builds an unsigned release without the PowerShell modules, so it can't migrate Defender, Exchange, Purview or Teams policies. Use it only to check the packaging.
+
+## Building on GitHub
+
+The **Release** workflow (`.github/workflows/release.yml`) runs the same `tools\Publish.ps1` on a Windows runner, with the PowerShell modules bundled, and attaches everything in `artifacts\releases` to a **draft** release tagged `v<version>`. Start it from **Actions → Release → Run workflow**, give the version, then check the draft and press **Publish release**. It doesn't sign yet: once there's a certificate, pass `-SignParams` or `-AzureTrustedSignFile` in its "Build and pack" step, with the secrets that need.

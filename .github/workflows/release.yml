@@ -1,0 +1,52 @@
+# Builds a Movewise release on Windows with tools\Publish.ps1 (tests, bundled PowerShell modules, self-contained
+# publish, Velopack packaging) and attaches it to a draft GitHub release. Nothing is published until someone presses
+# "Publish release" on the draft. Signing isn't set up yet, so the installer is unsigned (see docs/releasing.md).
+name: Release
+
+on:
+  workflow_dispatch:
+    inputs:
+      version:
+        description: Release version, such as 0.1.0. Must be higher than the last release for updates to find it.
+        required: true
+        default: 0.1.0
+
+permissions:
+  contents: write
+
+jobs:
+  release:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: 8.0.x
+
+      # Save-Module asks before using an untrusted repository, which would stop an unattended build.
+      - name: Trust the PowerShell Gallery
+        shell: pwsh
+        run: Set-PSRepository -Name PSGallery -InstallationPolicy Trusted
+
+      - name: Build and pack
+        shell: pwsh
+        env:
+          VERSION: ${{ inputs.version }}
+        run: .\tools\Publish.ps1 -Version $env:VERSION
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: movewise-${{ inputs.version }}
+          path: artifacts/releases/*
+          if-no-files-found: error
+
+      - name: Create a draft release
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ github.token }}
+          VERSION: ${{ inputs.version }}
+        run: |
+          $notes = "Unsigned build: Windows SmartScreen will warn when the installer runs. Built from $env:GITHUB_SHA."
+          gh release create "v$env:VERSION" (Get-ChildItem artifacts/releases -File).FullName `
+            --draft --target $env:GITHUB_SHA --title "Movewise $env:VERSION" --notes $notes
