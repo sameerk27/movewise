@@ -57,12 +57,23 @@ Under **Advanced settings**, set **Allow public client flows** to **Yes**. Save.
 | `DeviceManagementServiceConfig.Read.All` / `.ReadWrite.All` | Intune enrollment and Autopilot |
 | `DeviceManagementRBAC.Read.All` / `.ReadWrite.All` | Intune scope tags |
 | `Sites.Read.All` | Finding the SharePoint and OneDrive sites that Purview policies apply to |
+| `Policy.ReadWrite.Authorization` | Entra ID user settings (the authorization policy) (destination only) |
+| `Policy.ReadWrite.AuthenticationMethod` | Which sign-in methods users may use (the authentication methods policy) (destination only) |
+| `Policy.ReadWrite.CrossTenantAccess` | Cross-tenant access default settings and partners (destination only) |
+| `RoleManagement.ReadWrite.Directory` | Creating custom Entra ID admin roles (destination only). The permission itself is broader: it also allows assigning directory roles, within what the signed-in admin can do |
+| `SharePointTenantSettings.Read.All` / `.ReadWrite.All` | SharePoint and OneDrive sharing, sync and site creation settings |
+| `CustomDetection.Read.All` / `.ReadWrite.All` | Defender custom detection rules |
 
 **Office 365 Exchange Online** (under *APIs my organization uses*) → **Delegated permissions** → `Exchange.Manage`
 (used by Exchange Online PowerShell for Exchange and Defender for Office 365 policies).
 
 **Skype and Teams Tenant Admin API** (under *APIs my organization uses*) → **Delegated permissions** → `user_impersonation`
 (used by Microsoft Teams PowerShell for Teams policies and their group assignments. If it isn't granted, the Teams module signs the same account in itself, and a Microsoft sign-in window may appear once per session.)
+
+**WindowsDefenderATP** (under *APIs my organization uses*) → **Delegated permissions** → `Ti.ReadWrite`
+(used for Defender for Endpoint indicators).
+
+Where a permission is listed as `.Read.All` / `.ReadWrite.All`, the source uses the read one and the destination the write one. One app registration serves both tenants, so both admins consent to the whole list; Movewise itself only reads from the source (see [Why the source stays unchanged](#why-the-source-stays-unchanged)).
 
 Purview policies go through Security & Compliance PowerShell. Movewise first tries the admin's own token for it; if the tenant doesn't accept that, the Exchange Online module signs the same account in itself, and a Microsoft sign-in window may appear once per session. This needs ExchangeOnlineManagement 3.8.0 or later, which `tools/Save-Modules.ps1` bundles.
 

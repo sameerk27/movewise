@@ -71,6 +71,9 @@ public sealed class DeployStep
     /// </summary>
     public List<string> CreatedAssignments { get; init; } = [];
 
+    /// <summary>The group a Teams policy assignment was last sent for without an answer yet, so a retry can tell whether "already exists" was its own.</summary>
+    public string? PendingAssignment { get; set; }
+
     /// <summary>True when Movewise created it in test mode, report-only or switched off, so it has to be turned on afterwards.</summary>
     public bool InTestMode { get; init; }
 
@@ -91,6 +94,18 @@ public sealed class DeployStep
 
     public DateTimeOffset? Finished { get; set; }
 
+    /// <summary>
+    /// When the create request was last sent. An interrupted group create only counts a group made after this as its
+    /// own, since groups can share a name with one that was in the destination before the run.
+    /// </summary>
+    public DateTimeOffset? CreateSent { get; set; }
+
+    /// <summary>
+    /// Skipped during the deployment because an object it needs couldn't be created then. Unlike a step the plan
+    /// skipped, it's tried again on resume, once that object may exist.
+    /// </summary>
+    public bool WaitsOnFailedStep { get; set; }
+
     [JsonIgnore] public bool IsGroup => TargetType == ResourceRegistry.Group;
 
     [JsonIgnore] public string TypeName => IsGroup ? "Group" : ResourceRegistry.Get(TargetType).DisplayName;
@@ -98,7 +113,7 @@ public sealed class DeployStep
     /// <summary>True while this run's object is in the destination.</summary>
     [JsonIgnore] public bool ExistsInDestination => DestinationId is not null && Status is not (StepStatus.RolledBack);
 
-    [JsonIgnore] public bool IsFinished => Status is StepStatus.Done or StepStatus.Skipped or StepStatus.RolledBack;
+    [JsonIgnore] public bool IsFinished => Status is StepStatus.Done or StepStatus.RolledBack || Status == StepStatus.Skipped && !WaitsOnFailedStep;
 
     /// <summary>What deploying again would try: not started, interrupted, or failed. A failed rollback is left for rolling back.</summary>
     [JsonIgnore] public bool IsUnfinished => !IsFinished && Status != StepStatus.RollbackFailed;

@@ -140,6 +140,19 @@ public class PreflightSafetyTests
     }
 
     [Fact]
+    public async Task A_retention_policy_naming_a_renamed_label_is_pointed_out()
+    {
+        var label = Item(ResourceRegistry.Get(ResourceRegistry.RetentionLabel), """{ "Name": "Confidential" }""");
+        var policy = Item(ResourceRegistry.Get(ResourceRegistry.RetentionPolicy), """{ "Name": "Keep finance", "rules": [ { "Name": "Keep finance rule", "PublishComplianceTag": "Confidential" } ] }""");
+        var tenant = new TenantClients(new FakeGraph(), Compliance: new FakePowerShell().Returns("Get-ComplianceTag", """{ "Name": "Confidential" }"""));
+
+        var report = await PreflightCheck.RunAsync(tenant, Destination, [label, policy], Plan(), new PreflightChoices { NameConflicts = ConflictChoice.CreateWithSuffix });
+
+        var finding = Assert.Single(report.Findings, f => f.Title == "Retention policies name a renamed label");
+        Assert.Equal("Keep finance: label \"Confidential\"", Assert.Single(finding.Items));
+    }
+
+    [Fact]
     public async Task A_name_taken_even_with_migrated_added_is_skipped()
     {
         var tenant = new TenantClients(new FakeGraph(), Exchange: DestinationWithRule("Execs rule", "Execs rule (migrated)"));

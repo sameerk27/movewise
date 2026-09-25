@@ -250,6 +250,77 @@ public class DeployTests
     }
 
     [Fact]
+    public async Task A_skipped_policy_is_created_on_resume_once_what_it_needs_exists()
+    {
+        var graph = new FakeGraph().FailingWrite(Location.CreatePath, new GraphException(HttpStatusCode.TooManyRequests, "TooManyRequests", "Slow down"), times: 1);
+        var run = FullRun();
+        await Deploy(graph, run);
+        var policy = Step(run, ResourceRegistry.ConditionalAccessPolicy);
+        Assert.Equal(StepStatus.Skipped, policy.Status);
+        Assert.Equal(2, run.RemainingCount);
+
+        await Deploy(graph, run);
+
+        Assert.Equal(StepStatus.Done, Step(run, ResourceRegistry.NamedLocation).Status);
+        Assert.Equal(StepStatus.Done, policy.Status);
+        Assert.Contains("new-", BodyPostedTo(graph, ConditionalAccess.CreatePath).ToJsonString());
+        Assert.Equal(0, run.RemainingCount);
+    }
+
+    static string GroupLookup(string name) =>
+        GraphQuery.Where("v1.0/groups", $"displayName eq {GraphQuery.Literal(name)}", "id,createdDateTime", top: 10);
+
+    static DeployStep InterruptedGroup(DeployRun run)
+    {
+        var group = Step(run, ResourceRegistry.Group);
+        group.Status = StepStatus.Creating;
+        group.CreateSent = DateTimeOffset.UtcNow;
+        return group;
+    }
+
+    [Fact]
+    public async Task Rolling_back_an_interrupted_group_create_leaves_an_older_group_with_its_name()
+    {
+        var graph = new FakeGraph().Object(GroupLookup("All staff"), """{ "value": [ { "id": "theirs", "createdDateTime": "2020-01-01T00:00:00Z" } ] }""");
+        var run = FullRun();
+        var group = InterruptedGroup(run);
+
+        await Deployer.RollbackAsync(graph, run, () => Task.CompletedTask);
+
+        Assert.Empty(graph.Deletes);
+        Assert.Equal(StepStatus.RolledBack, group.Status);
+        Assert.Null(group.DestinationId);
+    }
+
+    [Fact]
+    public async Task Resuming_an_interrupted_group_create_makes_a_new_group_rather_than_using_an_older_one()
+    {
+        var graph = new FakeGraph().Object(GroupLookup("All staff"), """{ "value": [ { "id": "theirs", "createdDateTime": "2020-01-01T00:00:00Z" } ] }""");
+        var run = FullRun();
+        var group = InterruptedGroup(run);
+
+        await Deploy(graph, run);
+
+        Assert.Single(graph.Posts, p => p.Path == "v1.0/groups");
+        Assert.NotEqual("theirs", group.DestinationId);
+        Assert.DoesNotContain("theirs", BodyPostedTo(graph, ConditionalAccess.CreatePath).ToJsonString());
+    }
+
+    [Fact]
+    public async Task Resuming_an_interrupted_group_create_uses_the_group_it_made()
+    {
+        var run = FullRun();
+        var group = InterruptedGroup(run);
+        var madeNow = DateTimeOffset.UtcNow.ToString("o");
+        var graph = new FakeGraph().Object(GroupLookup("All staff"), $$"""{ "value": [ { "id": "ours", "createdDateTime": "{{madeNow}}" } ] }""");
+
+        await Deploy(graph, run);
+
+        Assert.DoesNotContain(graph.Posts, p => p.Path == "v1.0/groups");
+        Assert.Equal("ours", group.DestinationId);
+    }
+
+    [Fact]
     public async Task Rollback_deletes_what_the_run_created_newest_first()
     {
         var graph = new FakeGraph();

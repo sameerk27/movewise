@@ -84,7 +84,7 @@
                         <span>Save a copy of the destination's current policies first <span class="muted">(recommended, for your records)</span></span>
                     </label>
                     <div class="actions">
-                        <button class="btn primary" disabled="@Migration.IsWorking" @onclick="StartAsync">Deploy now</button>
+                        <button class="btn primary" disabled="@(Migration.IsWorking || Migration.IsUpdating)" @onclick="StartAsync">Deploy now</button>
                     </div>
                 </section>
             }

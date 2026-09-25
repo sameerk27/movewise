@@ -45,14 +45,18 @@ public sealed class UpdateService(MovewiseOptions options, MigrationService migr
     {
         if (_manager is null || _update is null)
             return;
-        if (migration.IsBusy)
+        if (migration.IsWorking)
             throw new InvalidOperationException("Finish or stop the deployment before updating.");
 
+        // Nothing can start while the update downloads, since the restart at the end would cut it off.
         IsUpdating = true;
+        migration.IsUpdating = true;
         Changed?.Invoke();
         try
         {
             await _manager.DownloadUpdatesAsync(_update);
+            if (migration.IsWorking)
+                throw new InvalidOperationException("The update is downloaded. Update again once the deployment has finished.");
             DiagnosticLog.Info($"Restarting into {AvailableVersion}.");
             _manager.ApplyUpdatesAndRestart(_update);
         }
@@ -64,6 +68,7 @@ public sealed class UpdateService(MovewiseOptions options, MigrationService migr
         finally
         {
             IsUpdating = false;
+            migration.IsUpdating = false;
             Changed?.Invoke();
         }
     }

@@ -87,4 +87,36 @@ public class RedactorTests
 
         Assert.Equal(text, Redactor.Redact(text));
     }
+
+    [Fact]
+    public void Removes_domains_in_any_case_and_windows_sign_in_names()
+    {
+        var text = Redactor.Redact("Accepted domain Contoso.com and FABRIKAM.CO.UK; run as CONTOSO\\anna from C:\\Users\\anna.smith\\AppData");
+
+        Assert.DoesNotContain("ontoso", text, StringComparison.OrdinalIgnoreCase);
+        Assert.DoesNotContain("fabrikam", text, StringComparison.OrdinalIgnoreCase);
+        Assert.DoesNotContain("anna", text);
+        Assert.Contains(@"\Users\[user]", text);
+    }
+
+    [Fact]
+    public void Removes_a_signed_in_tenants_domain_whatever_it_ends_in()
+    {
+        Redactor.Remember("northwind.consulting", "northwind.onmicrosoft.com");
+
+        var text = Redactor.Redact("Mail for Northwind.Consulting is routed");
+
+        Assert.DoesNotContain("orthwind", text, StringComparison.OrdinalIgnoreCase);
+    }
+
+    [Fact]
+    public void Removes_app_secrets_and_whole_quoted_passwords()
+    {
+        var text = Redactor.Redact("""{"secretText":"Ab1~xyz","password": "hunter2 extra words","apiKey":"k-123"}""");
+
+        Assert.DoesNotContain("Ab1~xyz", text);
+        Assert.DoesNotContain("hunter2", text);
+        Assert.DoesNotContain("extra words", text);
+        Assert.DoesNotContain("k-123", text);
+    }
 }
