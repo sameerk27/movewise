@@ -110,9 +110,17 @@ public sealed class MigrationState
         }
         else
         {
+            var sameTenant = Destination?.Info.TenantId == connection?.Info.TenantId;
             Destination = connection;
             if (Run is not null && Run.DestinationTenantId != connection?.Info.TenantId)
                 Run = null;
+            // Matches and the dry run hold another tenant's IDs.
+            if (!sameTenant)
+            {
+                Mapping = null;
+                _mappingSelection = null;
+                Preflight = null;
+            }
         }
         Changed?.Invoke();
     }

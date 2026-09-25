@@ -28,7 +28,8 @@ public static class Matcher
     {
         public ConcurrentDictionary<string, Lazy<Task<IReadOnlyList<JsonObject>>>> DestinationLists { get; } = new();
 
-        public Lazy<Task<IReadOnlyList<JsonObject>>> SourceDomains { get; } = new(() => ListDomainsAsync(Source, CancellationToken.None));
+        // Without the source's domains every address would look like a partner's and be kept as it is, so this one can't fail quietly.
+        public Lazy<Task<IReadOnlyList<JsonObject>>> SourceDomains { get; } = new(() => ListSourceDomainsAsync(Source));
         public Lazy<Task<IReadOnlyList<JsonObject>>> DestinationDomains { get; } = new(() => ListDomainsAsync(Destination, CancellationToken.None));
         public Lazy<Task<string?>> SourceSharePoint { get; } = new(() => SharePointHostAsync(Source, CancellationToken.None));
         public Lazy<Task<string?>> DestinationSharePoint { get; } = new(() => SharePointHostAsync(Destination, CancellationToken.None));
@@ -451,6 +452,18 @@ public static class Matcher
         catch (Exception ex) when (ex is not OperationCanceledException)
         {
             return [];
+        }
+    }
+
+    static async Task<IReadOnlyList<JsonObject>> ListSourceDomainsAsync(IGraphReader graph)
+    {
+        try
+        {
+            return await graph.GetCollectionAsync("v1.0/domains?$select=id,isVerified,isInitial,isDefault", CancellationToken.None);
+        }
+        catch (Exception ex) when (ex is not OperationCanceledException)
+        {
+            throw new InvalidOperationException($"Couldn't read the source tenant's domains, which decide which addresses need a match. {ex.Message}", ex);
         }
     }
 
