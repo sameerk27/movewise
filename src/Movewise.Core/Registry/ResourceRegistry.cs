@@ -574,7 +574,7 @@ public static class ResourceRegistry
             [])
         {
             Backend = Backend.ExchangePowerShell,
-            Cmdlets = new("Get-QuarantinePolicy", "New-QuarantinePolicy", "Remove-QuarantinePolicy"),
+            Cmdlets = new("Get-QuarantinePolicy", "New-QuarantinePolicy", "Remove-QuarantinePolicy") { Set = "Set-QuarantinePolicy" },
             IdIsName = true,
             Include = item =>
                 !string.Equals(item["QuarantinePolicyType"]?.GetValue<string>(), "GlobalQuarantinePolicy", StringComparison.OrdinalIgnoreCase)
@@ -672,7 +672,7 @@ public static class ResourceRegistry
             [])
         {
             Backend = Backend.ExchangePowerShell,
-            Cmdlets = new("Get-TransportRule", "New-TransportRule", "Remove-TransportRule"),
+            Cmdlets = new("Get-TransportRule", "New-TransportRule", "Remove-TransportRule") { Set = "Set-TransportRule" },
             MakeSafe = rule => SetIf(rule, "Mode", "Enforce", "Audit",
                 "Created in test mode: it's evaluated and logged, but takes no action on mail. Set it to Enforce after checking message trace."),
         },
@@ -688,7 +688,7 @@ public static class ResourceRegistry
             [])
         {
             Backend = Backend.ExchangePowerShell,
-            Cmdlets = new("Get-MobileDeviceMailboxPolicy", "New-MobileDeviceMailboxPolicy", "Remove-MobileDeviceMailboxPolicy"),
+            Cmdlets = new("Get-MobileDeviceMailboxPolicy", "New-MobileDeviceMailboxPolicy", "Remove-MobileDeviceMailboxPolicy") { Set = "Set-MobileDeviceMailboxPolicy" },
             // The default policy exists in every tenant.
             Include = item => item["IsDefault"]?.GetValue<bool>() != true,
         },
@@ -706,7 +706,7 @@ public static class ResourceRegistry
             [])
         {
             Backend = Backend.ExchangePowerShell,
-            Cmdlets = new("Get-RemoteDomain", "New-RemoteDomain", "Remove-RemoteDomain") { Set = "Set-RemoteDomain" },
+            Cmdlets = new("Get-RemoteDomain", "New-RemoteDomain", "Remove-RemoteDomain") { Set = "Set-RemoteDomain", SetAfterCreate = true },
             Include = item => item["DomainName"]?.GetValue<string>() != "*",
         },
 
@@ -721,7 +721,7 @@ public static class ResourceRegistry
             [])
         {
             Backend = Backend.ExchangePowerShell,
-            Cmdlets = new("Get-OwaMailboxPolicy", "New-OwaMailboxPolicy", "Remove-OwaMailboxPolicy") { Set = "Set-OwaMailboxPolicy" },
+            Cmdlets = new("Get-OwaMailboxPolicy", "New-OwaMailboxPolicy", "Remove-OwaMailboxPolicy") { Set = "Set-OwaMailboxPolicy", SetAfterCreate = true },
             Include = item => item["IsDefault"]?.GetValue<bool>() != true,
         },
 
@@ -737,7 +737,7 @@ public static class ResourceRegistry
             [])
         {
             Backend = Backend.ExchangePowerShell,
-            Cmdlets = new("Get-RetentionPolicyTag", "New-RetentionPolicyTag", "Remove-RetentionPolicyTag"),
+            Cmdlets = new("Get-RetentionPolicyTag", "New-RetentionPolicyTag", "Remove-RetentionPolicyTag") { Set = "Set-RetentionPolicyTag" },
             IdIsName = true,
             Include = item =>
                 item["SystemTag"]?.GetValue<bool>() != true
@@ -756,7 +756,7 @@ public static class ResourceRegistry
             [MailboxRetentionTag])
         {
             Backend = Backend.ExchangePowerShell,
-            Cmdlets = new("Get-RetentionPolicy", "New-RetentionPolicy", "Remove-RetentionPolicy"),
+            Cmdlets = new("Get-RetentionPolicy", "New-RetentionPolicy", "Remove-RetentionPolicy") { Set = "Set-RetentionPolicy" },
             Include = item => item["IsDefault"]?.GetValue<bool>() != true && item["IsDefaultArbitrationMailbox"]?.GetValue<bool>() != true,
         },
 
@@ -771,7 +771,7 @@ public static class ResourceRegistry
             [])
         {
             Backend = Backend.ExchangePowerShell,
-            Cmdlets = new("Get-JournalRule", "New-JournalRule", "Remove-JournalRule"),
+            Cmdlets = new("Get-JournalRule", "New-JournalRule", "Remove-JournalRule") { Set = "Set-JournalRule" },
             MakeSafe = rule => SetIf(rule, "Enabled", true, false,
                 "Created switched off, so it doesn't send copies of mail anywhere yet. Turn it on after checking where it sends them."),
         },
@@ -825,8 +825,8 @@ public static class ResourceRegistry
             [])
         {
             Backend = Backend.CompliancePowerShell,
-            Cmdlets = new("Get-DlpCompliancePolicy", "New-DlpCompliancePolicy", "Remove-DlpCompliancePolicy", ["DistributionDetail"]),
-            Rules = new("Get-DlpComplianceRule", "New-DlpComplianceRule", "Remove-DlpComplianceRule", "ParentPolicyName", "Policy", ListPerPolicy: true),
+            Cmdlets = new("Get-DlpCompliancePolicy", "New-DlpCompliancePolicy", "Remove-DlpCompliancePolicy", ["DistributionDetail"]) { Set = "Set-DlpCompliancePolicy" },
+            Rules = new("Get-DlpComplianceRule", "New-DlpComplianceRule", "Remove-DlpComplianceRule", "ParentPolicyName", "Policy", ListPerPolicy: true) { Set = "Set-DlpComplianceRule" },
             MakeSafe = policy => SetIf(policy, "Mode", "Enable", "TestWithoutNotifications",
                 "Created in simulation mode: matches are reported, but nothing is blocked and users see no tips. Turn it on after checking the reports."),
         },
@@ -843,7 +843,7 @@ public static class ResourceRegistry
             [])
         {
             Backend = Backend.CompliancePowerShell,
-            Cmdlets = new("Get-ComplianceTag", "New-ComplianceTag", "Remove-ComplianceTag"),
+            Cmdlets = new("Get-ComplianceTag", "New-ComplianceTag", "Remove-ComplianceTag") { Set = "Set-ComplianceTag" },
             IdIsName = true,
         },
 
@@ -858,8 +858,8 @@ public static class ResourceRegistry
             [])
         {
             Backend = Backend.CompliancePowerShell,
-            Cmdlets = new("Get-RetentionCompliancePolicy", "New-RetentionCompliancePolicy", "Remove-RetentionCompliancePolicy", ["DistributionDetail"]),
-            Rules = new("Get-RetentionComplianceRule", "New-RetentionComplianceRule", "Remove-RetentionComplianceRule", "Policy", "Policy", ListPerPolicy: true),
+            Cmdlets = new("Get-RetentionCompliancePolicy", "New-RetentionCompliancePolicy", "Remove-RetentionCompliancePolicy", ["DistributionDetail"]) { Set = "Set-RetentionCompliancePolicy" },
+            Rules = new("Get-RetentionComplianceRule", "New-RetentionComplianceRule", "Remove-RetentionComplianceRule", "Policy", "Policy", ListPerPolicy: true) { Set = "Set-RetentionComplianceRule" },
             // Adaptive scopes aren't migrated, so policies that use them can't be recreated.
             Include = item => item["AdaptiveScopeLocation"] is not JsonArray { Count: > 0 },
             MakeSafe = policy =>
@@ -891,7 +891,7 @@ public static class ResourceRegistry
             [])
         {
             Backend = Backend.CompliancePowerShell,
-            Cmdlets = new("Get-Label", "New-Label", "Remove-Label"),
+            Cmdlets = new("Get-Label", "New-Label", "Remove-Label") { Set = "Set-Label" },
             AfterRead = SensitivityLabels.FromGetLabel,
             PrepareForCreate = SensitivityLabels.PrepareLabelForCreate,
         },
@@ -914,7 +914,7 @@ public static class ResourceRegistry
             [SensitivityLabel])
         {
             Backend = Backend.CompliancePowerShell,
-            Cmdlets = new("Get-LabelPolicy", "New-LabelPolicy", "Remove-LabelPolicy"),
+            Cmdlets = new("Get-LabelPolicy", "New-LabelPolicy", "Remove-LabelPolicy") { Set = "Set-LabelPolicy" },
             AfterRead = SensitivityLabels.FromGetLabelPolicy,
         },
 
@@ -935,8 +935,8 @@ public static class ResourceRegistry
             [SensitivityLabel])
         {
             Backend = Backend.CompliancePowerShell,
-            Cmdlets = new("Get-AutoSensitivityLabelPolicy", "New-AutoSensitivityLabelPolicy", "Remove-AutoSensitivityLabelPolicy", ["DistributionDetail"]),
-            Rules = new("Get-AutoSensitivityLabelRule", "New-AutoSensitivityLabelRule", "Remove-AutoSensitivityLabelRule", "ParentPolicyName", "Policy", ListPerPolicy: true),
+            Cmdlets = new("Get-AutoSensitivityLabelPolicy", "New-AutoSensitivityLabelPolicy", "Remove-AutoSensitivityLabelPolicy", ["DistributionDetail"]) { Set = "Set-AutoSensitivityLabelPolicy" },
+            Rules = new("Get-AutoSensitivityLabelRule", "New-AutoSensitivityLabelRule", "Remove-AutoSensitivityLabelRule", "ParentPolicyName", "Policy", ListPerPolicy: true) { Set = "Set-AutoSensitivityLabelRule" },
             MakeSafe = policy => SetIf(policy, "Mode", "Enable", "TestWithoutNotifications",
                 "Created in simulation: it shows what would be labeled, but labels nothing. Turn it on after checking the simulation."),
         },
@@ -953,7 +953,7 @@ public static class ResourceRegistry
             [])
         {
             Backend = Backend.CompliancePowerShell,
-            Cmdlets = new("Get-ProtectionAlert", "New-ProtectionAlert", "Remove-ProtectionAlert"),
+            Cmdlets = new("Get-ProtectionAlert", "New-ProtectionAlert", "Remove-ProtectionAlert") { Set = "Set-ProtectionAlert" },
             Include = item => item["IsSystemRule"]?.GetValue<bool>() != true,
         },
 
@@ -969,7 +969,7 @@ public static class ResourceRegistry
             [])
         {
             Backend = Backend.CompliancePowerShell,
-            Cmdlets = new("Get-UnifiedAuditLogRetentionPolicy", "New-UnifiedAuditLogRetentionPolicy", "Remove-UnifiedAuditLogRetentionPolicy"),
+            Cmdlets = new("Get-UnifiedAuditLogRetentionPolicy", "New-UnifiedAuditLogRetentionPolicy", "Remove-UnifiedAuditLogRetentionPolicy") { Set = "Set-UnifiedAuditLogRetentionPolicy" },
             KeepsPriority = true,
         },
 
@@ -1072,7 +1072,7 @@ public static class ResourceRegistry
             [])
         {
             Backend = Backend.TeamsPowerShell,
-            Cmdlets = new($"Get-Cs{noun}", $"New-Cs{noun}", $"Remove-Cs{noun}", NameParameter: "Identity"),
+            Cmdlets = new($"Get-Cs{noun}", $"New-Cs{noun}", $"Remove-Cs{noun}", NameParameter: "Identity") { Set = $"Set-Cs{noun}" },
             TeamsPolicyType = noun,
             Include = item => !BuiltInTeamsPolicies.Contains(item["Name"]?.GetValue<string>() ?? item["Identity"]?.GetValue<string>() ?? "Global"),
         };
@@ -1216,8 +1216,8 @@ public static class ResourceRegistry
         new(id, M365Service.Defender, displayName, "", "Name", PowerShellReadOnly, [.. policyReferences, .. RecipientConditions("rules[].")], [QuarantinePolicy])
         {
             Backend = Backend.ExchangePowerShell,
-            Cmdlets = new($"Get-{noun}Policy", $"New-{noun}Policy", $"Remove-{noun}Policy"),
-            Rules = new($"Get-{noun}Rule", $"New-{noun}Rule", $"Remove-{noun}Rule", $"{noun}Policy", $"{noun}Policy"),
+            Cmdlets = new($"Get-{noun}Policy", $"New-{noun}Policy", $"Remove-{noun}Policy") { Set = $"Set-{noun}Policy" },
+            Rules = new($"Get-{noun}Rule", $"New-{noun}Rule", $"Remove-{noun}Rule", $"{noun}Policy", $"{noun}Policy") { Set = $"Set-{noun}Rule" },
             Include = item =>
                 item["IsDefault"]?.GetValue<bool>() != true
                 && item["IsBuiltInProtection"]?.GetValue<bool>() != true

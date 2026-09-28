@@ -105,7 +105,7 @@
                                         <div class="choice" role="radiogroup" aria-label="What to do with name conflicts">
                                             <label><input type="radio" name="conflicts" checked="@(State.PreflightChoices.NameConflicts == ConflictChoice.Skip)" @onchange="@(() => SetConflictsAsync(ConflictChoice.Skip))" /> Skip them</label>
                                             <label><input type="radio" name="conflicts" checked="@(State.PreflightChoices.NameConflicts == ConflictChoice.CreateWithSuffix)" @onchange="@(() => SetConflictsAsync(ConflictChoice.CreateWithSuffix))" /> Create with "(migrated)" added</label>
-                                            <label title="Entra, Intune and Defender for Endpoint policies. The rest are skipped."><input type="radio" name="conflicts" checked="@(State.PreflightChoices.NameConflicts == ConflictChoice.Update)" @onchange="@(() => SetConflictsAsync(ConflictChoice.Update))" /> Update the existing ones to match</label>
+                                            <label title="Kinds that can't be changed in place are skipped."><input type="radio" name="conflicts" checked="@(State.PreflightChoices.NameConflicts == ConflictChoice.Update)" @onchange="@(() => SetConflictsAsync(ConflictChoice.Update))" /> Update the existing ones to match</label>
                                         </div>
                                     }
                                     @if (finding.Choice == FindingChoice.RiskPoliciesWithoutP2)

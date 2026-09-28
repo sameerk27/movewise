@@ -150,18 +150,86 @@ public class UpdateTests
     }
 
     [Fact]
-    public async Task Policies_that_cant_be_updated_in_place_are_skipped_when_update_is_chosen()
+    public async Task Kinds_that_cant_be_updated_in_place_are_skipped_when_update_is_chosen()
     {
-        var transportRule = ResourceRegistry.Get(ResourceRegistry.TransportRule);
-        var shell = new FakePowerShell().Returns("Get-TransportRule", """{ "Name": "Block exe", "Guid": "t1", "Mode": "Audit" }""");
-        var source = Item(transportRule, """{ "Name": "Block exe", "Mode": "Enforce" }""", "t0");
+        var strength = ResourceRegistry.Get(ResourceRegistry.AuthenticationStrength);
+        var destination = new FakeGraph().Collection(strength.ListPath,
+            """{ "id": "s-dst", "displayName": "Phishing-resistant plus", "allowedCombinations": ["fido2"] }""");
+        var source = Item(strength, """{ "id": "s-src", "displayName": "Phishing-resistant plus", "allowedCombinations": ["fido2", "windowsHelloForBusiness"] }""", "s-src");
+
+        var report = await Preflight(destination, source, new PreflightChoices { NameConflicts = ConflictChoice.Update });
+
+        var policy = Assert.Single(report.Policies);
+        Assert.Equal(Outcome.Skip, policy.Outcome);
+        Assert.Null(policy.UpdatesId);
+        Assert.Contains(policy.Reasons, r => r.Contains("can't be changed in place"));
+    }
+
+    // ---------- PowerShell policies ----------
+
+    static readonly ResourceType AntiPhish = ResourceRegistry.Get(ResourceRegistry.AntiPhishPolicy);
+
+    static FakePowerShell PhishDestination() => new FakePowerShell()
+        .Returns("Get-AntiPhishPolicy", """{ "Name": "Execs", "Guid": "ap-dst", "Identity": "Execs", "PhishThresholdLevel": 1, "EnableMailboxIntelligence": false }""")
+        .Returns("Get-AntiPhishRule", """{ "Name": "Execs", "AntiPhishPolicy": "Execs", "State": "Enabled", "Comments": "Old" }""")
+        .Accepts("Set-AntiPhishPolicy", "Identity", "Name", "PhishThresholdLevel", "EnableMailboxIntelligence")
+        .Accepts("Set-AntiPhishRule", "Identity", "Name", "Comments")
+        .Accepts("New-AntiPhishRule", "Name", "AntiPhishPolicy", "Comments");
+
+    static ExportedResource PhishSource() => Item(AntiPhish, """
+        { "Name": "Execs", "PhishThresholdLevel": 3, "EnableMailboxIntelligence": false,
+          "rules": [ { "Name": "Execs", "Enabled": true, "Comments": "Executives and the board" },
+                     { "Name": "Execs - assistants", "Enabled": true, "Comments": "Their assistants" } ] }
+        """, "ap-src");
+
+    [Fact]
+    public async Task A_powershell_policy_is_updated_with_set_its_rules_changed_or_added_and_rollback_undoes_all_of_it()
+    {
+        var shell = PhishDestination();
+        var tenant = new TenantClients(new FakeGraph(), Exchange: shell);
+
+        var report = await PreflightCheck.RunAsync(tenant, Destination, [PhishSource()], new MappingPlan([]), new PreflightChoices { NameConflicts = ConflictChoice.Update });
+        var policy = Assert.Single(report.Policies);
+        Assert.Equal("ap-dst", policy.UpdatesId);
+        Assert.Equal(["PhishThresholdLevel", "rules"], policy.ChangedSettings);
+
+        var run = DeployPlanner.Plan(report, new MappingPlan([]), Source, Destination);
+        await Deployer.RunAsync(tenant, run, () => Task.CompletedTask);
+
+        var step = Assert.Single(run.Steps);
+        Assert.Equal(StepStatus.Done, step.Status);
+        Assert.Empty(shell.CallsTo("New-AntiPhishPolicy"));
+        var set = Assert.Single(shell.CallsTo("Set-AntiPhishPolicy"));
+        Assert.Equal("ap-dst", set["Identity"]!.GetValue<string>());
+        Assert.Equal(3, set["PhishThresholdLevel"]!.GetValue<int>());
+        Assert.False(set.ContainsKey("Name"));
+        var ruleSet = Assert.Single(shell.CallsTo("Set-AntiPhishRule"));
+        Assert.Equal("Execs", ruleSet["Identity"]!.GetValue<string>());
+        Assert.Equal("Executives and the board", ruleSet["Comments"]!.GetValue<string>());
+        var ruleNew = Assert.Single(shell.CallsTo("New-AntiPhishRule"));
+        Assert.Equal("Execs - assistants", ruleNew["Name"]!.GetValue<string>());
+        Assert.Equal("Execs", ruleNew["AntiPhishPolicy"]!.GetValue<string>());
+
+        await Deployer.RollbackAsync(tenant, run, () => Task.CompletedTask);
+
+        Assert.Equal(1, shell.CallsTo("Set-AntiPhishPolicy").Last()["PhishThresholdLevel"]!.GetValue<int>());
+        Assert.Equal("Old", shell.CallsTo("Set-AntiPhishRule").Last()["Comments"]!.GetValue<string>());
+        Assert.Equal("Execs - assistants", Assert.Single(shell.CallsTo("Remove-AntiPhishRule"))["Identity"]!.GetValue<string>());
+        Assert.Empty(shell.CallsTo("Remove-AntiPhishPolicy"));
+        Assert.Equal(StepStatus.RolledBack, step.Status);
+    }
+
+    [Fact]
+    public async Task Settings_a_set_cmdlet_doesnt_take_are_named_and_left_as_they_are()
+    {
+        var shell = PhishDestination().Accepts("Set-AntiPhishPolicy", "Identity", "PhishThresholdLevel");
+        var source = Item(AntiPhish, """{ "Name": "Execs", "PhishThresholdLevel": 1, "EnableMailboxIntelligence": true }""", "ap-src");
 
         var report = await PreflightCheck.RunAsync(new TenantClients(new FakeGraph(), Exchange: shell), Destination, [source], new MappingPlan([]),
             new PreflightChoices { NameConflicts = ConflictChoice.Update });
 
         var policy = Assert.Single(report.Policies);
         Assert.Equal(Outcome.Skip, policy.Outcome);
-        Assert.Null(policy.UpdatesId);
-        Assert.Contains(policy.Reasons, r => r.Contains("can't be changed in place"));
+        Assert.Contains(policy.Reasons, r => r.Contains("EnableMailboxIntelligence"));
     }
 }

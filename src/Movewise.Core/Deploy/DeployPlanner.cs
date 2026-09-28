@@ -131,6 +131,8 @@ public static partial class DeployPlanner
                 // Assignments posted one at a time can't be replaced that way; an update leaves them as they are.
                 Assignments = changes.Contains("assignments") && !type.AssignOneByOne ? assignments ?? [] : null,
                 Apps = changes.Contains("apps") ? apps : null,
+                // Rules are changed (or added) with their policy when they differ.
+                Rules = changes.Contains("rules") ? rules : null,
                 UpdateOf = existingId,
             };
         }

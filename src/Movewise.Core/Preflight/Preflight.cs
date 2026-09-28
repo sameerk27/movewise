@@ -352,7 +352,7 @@ public static partial class PreflightCheck
                 $"Name conflicts · {conflicts.Count} polic{(conflicts.Count == 1 ? "y" : "ies")}",
                 "A policy or rule with the same name already exists in the destination. " +
                 (suffix ? "These will be created with \" (migrated)\" added to the name, and to their rules' names."
-                    : update ? "The existing ones will be changed to match the source. Exchange, Defender for Office 365, Purview and Teams policies can't be changed in place yet, so those are skipped."
+                    : update ? "The existing ones will be changed to match the source. The few kinds that can't be changed in place (authentication strengths, allow/block entries, Defender for Endpoint indicators, custom sensitive information types) are skipped."
                     : "These will be skipped, and the existing ones left alone."),
                 conflicts.Select(p => $"{p.DisplayName} ({p.Type.DisplayName}{(ruleConflicts.Contains(p) ? ", a rule's name is taken" : "")}" +
                     $"{(update ? updates.Contains(p) ? ", updated" : ", can't be updated: skipped" : "")})").ToList()) { Choice = FindingChoice.NameConflicts });
@@ -398,6 +398,7 @@ public static partial class PreflightCheck
                 continue;
             }
 
+            IReadOnlySet<string>? setTakes = null;
             foreach (var policy in group)
             {
                 var existing = (choices.UpdateById ? inDestination.Items.FirstOrDefault(d => string.Equals(d.SourceId, policy.SourceId, StringComparison.OrdinalIgnoreCase)) : null)
@@ -410,14 +411,33 @@ public static partial class PreflightCheck
                 transformed[index] = Transformer.Transform(policy, plan, asTheyAre);
                 var changed = Compare.TenantComparer.Changes(type, transformed[index].Desired, existing.Settings)
                     .Where(k => !type.NotUpdatable.Contains(k, StringComparer.OrdinalIgnoreCase) && k != type.Children?.Property)
+                    // Rule order isn't copied: a priority has to fit among the destination's own rules.
+                    .Where(k => !k.Equals("Priority", StringComparison.OrdinalIgnoreCase))
                     .ToList();
+                // An update changes and adds rules but never deletes any, so rules differ only when one of the
+                // source's is missing from the destination, or set differently there.
+                if (changed.Contains("rules") && type.Rules is { } ruleCmdlets && !RulesDiffer(type, ruleCmdlets, transformed[index].Desired, existing.Settings))
+                    changed.Remove("rules");
+
+                // A Set cmdlet changes only what it takes: DLP locations, for one, are added and removed with
+                // parameters of their own, and Teams group assignments aren't policy settings at all.
+                var cantChange = new List<string>();
+                if (type.UsesPowerShell)
+                {
+                    setTakes ??= await tenant.PowerShellFor(type).ParametersOfAsync(type.Cmdlets!.Set!, ct);
+                    cantChange = changed.Where(k => !setTakes.Contains(k) && !(k == "rules" && type.Rules?.Set is not null)).ToList();
+                    changed = changed.Except(cantChange).ToList();
+                }
                 if (changed.Count == 0)
                 {
-                    Add(skipped, policy, "Already the same in the destination.");
+                    Add(skipped, policy, cantChange.Count == 0
+                        ? "Already the same in the destination."
+                        : $"Differs only in what can't be changed in place ({string.Join(", ", cantChange)}); change that in the admin center.");
                     continue;
                 }
                 updateChanges[key] = (existing.SourceId, existing.Settings, changed);
-                updatedPolicies.Add($"{policy.DisplayName} ({type.DisplayName}): {string.Join(", ", changed.Take(6))}{(changed.Count > 6 ? $" and {changed.Count - 6} more" : "")}");
+                updatedPolicies.Add($"{policy.DisplayName} ({type.DisplayName}): {string.Join(", ", changed.Take(6))}{(changed.Count > 6 ? $" and {changed.Count - 6} more" : "")}" +
+                    (cantChange.Count > 0 ? $". Can't be changed in place, so left as it is: {string.Join(", ", cantChange)}" : ""));
             }
         }
         if (updatedPolicies.Count > 0)
@@ -832,6 +852,29 @@ public static partial class PreflightCheck
                         yield return nested;
                 break;
         }
+    }
+
+    /// <summary>True when one of the desired rules is missing from the existing policy, or set differently there.</summary>
+    static bool RulesDiffer(ResourceType type, RuleCmdlets cmdlets, JsonObject desired, JsonObject existing)
+    {
+        var existingRules = (existing["rules"] as JsonArray ?? []).OfType<JsonObject>().ToList();
+        foreach (var rule in (desired["rules"] as JsonArray ?? []).OfType<JsonObject>())
+        {
+            var name = rule["Name"]?.GetValue<string>();
+            var match = existingRules.FirstOrDefault(r => string.Equals(r["Name"]?.GetValue<string>(), name, StringComparison.OrdinalIgnoreCase));
+            if (match is null)
+                return true;
+            var wanted = (JsonObject)rule.DeepClone();
+            var there = (JsonObject)match.DeepClone();
+            foreach (var link in new[] { cmdlets.PolicyProperty, cmdlets.PolicyParameter })
+            {
+                wanted.Remove(link);
+                there.Remove(link);
+            }
+            if (Compare.TenantComparer.Changes(type, wanted, there).Count > 0)
+                return true;
+        }
+        return false;
     }
 
     // Default sensitivity labels are named with a GUID; their display name is the one admins know.

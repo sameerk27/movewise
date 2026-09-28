@@ -53,13 +53,13 @@ public class RestoreTests
         Assert.True(Assert.Single(drift.Items, i => i.Type == EntraUserSettings).CanRestore);
         Assert.NotNull(drift.Snapshot);
 
-        // A Conditional Access policy changed since can be put back (Graph policies are updated in place); a mail flow
-        // rule can't yet (Exchange has Set cmdlets per type).
+        // A Conditional Access policy changed since can be put back (it's updated in place); an authentication strength
+        // can't (its combinations change through an action of their own).
         var changedPolicy = new ComparedItem(ConditionalAccess, "CA009", Difference.Different, new(), new(), ["state"], []) { FirstSource = drift.Items[0].FirstSource };
         Assert.True(changedPolicy.CanRestore);
-        var transportRule = ResourceRegistry.Get(ResourceRegistry.TransportRule);
-        var changedRule = new ComparedItem(transportRule, "Block exe", Difference.Different, new(), new(), ["Mode"], []) { FirstSource = drift.Items[0].FirstSource };
-        Assert.False(changedRule.CanRestore);
+        var strength = ResourceRegistry.Get(ResourceRegistry.AuthenticationStrength);
+        var changedStrength = new ComparedItem(strength, "Phishing-resistant plus", Difference.Different, new(), new(), ["allowedCombinations"], []) { FirstSource = drift.Items[0].FirstSource };
+        Assert.False(changedStrength.CanRestore);
         var added = new ComparedItem(ConditionalAccess, "CA010", Difference.OnlyInSecond, null, new(), [], []);
         Assert.False(added.CanRestore);
     }
