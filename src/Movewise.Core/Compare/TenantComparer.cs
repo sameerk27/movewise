@@ -71,13 +71,27 @@ public static class TenantComparer
     /// Compares the source with the destination. The source's policies are first put in the destination's terms, the same
     /// way deploying would (groups, users, locations and the like matched), so only real differences show.
     /// </summary>
+    /// <param name="sourceItems">
+    /// The source's policies when they're already known and can't be read again, as with a baseline. Only their
+    /// types are compared.
+    /// </param>
     public static async Task<ComparisonReport> CompareTenantsAsync(
         TenantClients source, string sourceName, TenantClients destination, string destinationName,
-        IEnumerable<ResourceType> types, IProgress<string>? progress = null, CancellationToken ct = default)
+        IEnumerable<ResourceType> types, IProgress<string>? progress = null, CancellationToken ct = default,
+        IReadOnlyList<ExportedResource>? sourceItems = null)
     {
         var typeList = types.Where(t => !t.ReferenceOnly).ToList();
-        progress?.Report($"Reading {sourceName}…");
-        var first = await Exporter.ExportAsync(source, typeList, progress, ct);
+        ExportResult first;
+        if (sourceItems is not null)
+        {
+            typeList = typeList.Where(t => sourceItems.Any(i => i.Type == t)).ToList();
+            first = new ExportResult(sourceItems.Where(i => typeList.Contains(i.Type)).ToList(), []);
+        }
+        else
+        {
+            progress?.Report($"Reading {sourceName}…");
+            first = await Exporter.ExportAsync(source, typeList, progress, ct);
+        }
         progress?.Report($"Reading {destinationName}…");
         var second = await Exporter.ExportAsync(destination, typeList, progress, ct);
 
