@@ -36,11 +36,11 @@ public sealed record ComparedItem(
     public ExportedResource? FirstSource { get; init; }
 
     /// <summary>
-    /// True when restoring from a snapshot can put it back: recreated when it was removed, or its settings set back.
-    /// Policies changed since can't be, as Movewise doesn't edit existing policies; ones added since are never deleted.
+    /// True when restoring from a snapshot can put it back: recreated when it was removed, or set back when it was
+    /// changed (settings, and policies of types Movewise can update). Ones added since are never deleted.
     /// </summary>
     public bool CanRestore => FirstSource is not null
-        && (Difference == Difference.OnlyInFirst || Difference == Difference.Different && Type.IsSettings);
+        && (Difference == Difference.OnlyInFirst || Difference == Difference.Different && (Type.IsSettings || Type.CanUpdate));
 }
 
 public sealed record ComparisonReport(

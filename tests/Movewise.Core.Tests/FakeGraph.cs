@@ -50,6 +50,17 @@ sealed class FakeGraph : IGraphWriter
         return Task.CompletedTask;
     }
 
+    public List<(string Path, JsonNode Body)> Puts { get; } = [];
+
+    public Task PutAsync(string path, JsonNode body, CancellationToken ct = default)
+    {
+        ThrowIfFailing(path);
+        Puts.Add((path, body.DeepClone()));
+        if (_objects.ContainsKey(path))
+            _objects[path] = (JsonObject)body.DeepClone();
+        return Task.CompletedTask;
+    }
+
     public Task DeleteAsync(string path, CancellationToken ct = default)
     {
         ThrowIfFailing(path);

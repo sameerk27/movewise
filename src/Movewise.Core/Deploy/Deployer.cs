@@ -110,6 +110,43 @@ public static class Deployer
                 return;
             }
 
+            // A policy already in the destination, changed to match rather than created.
+            if (step.UpdateOf is { } existingId)
+            {
+                var type = ResourceRegistry.Get(step.TargetType);
+                var values = (JsonObject)step.Body.DeepClone();
+                var missing = Resolve(values, run);
+                if (missing.Count > 0)
+                {
+                    await Update(StepStatus.Skipped, $"Needs {DeployPlanner.Names(missing, run.Steps, null)}, which couldn't be created.");
+                    return;
+                }
+
+                // What the policy is now is kept before anything changes, so rolling back can put it back. A retry
+                // keeps the first copy: by then the policy may already have been changed.
+                var graph = tenant.WriterFor(type);
+                if (step.Previous is null)
+                {
+                    var current = await ReadForUpdateAsync(graph, type, existingId, step.Assignments is not null, ct);
+                    step.Previous = type.UpdateWith == UpdateMethod.Put
+                        ? current
+                        : SettingsDiff.Only(current, values.Select(p => p.Key).Where(k => k != "@odata.type")
+                            .Concat(step.Assignments is null ? [] : ["assignments"]));
+                    step.DestinationId = existingId;
+                }
+                await Update(StepStatus.Creating);
+
+                await SendUpdateAsync(graph, type, existingId, values, ct);
+                await Update(StepStatus.Created);
+                var updated = values.Select(p => p.Key).Where(k => k != "@odata.type").Concat(step.Assignments is null ? [] : ["assignments"]).ToList();
+                var afterFailure = await AfterCreateAsync(tenant, run, step, isRetry, save, ct);
+                if (afterFailure is null)
+                    await Update(StepStatus.Done, $"Updated: {string.Join(", ", updated)}.");
+                else
+                    await Update(StepStatus.Failed, afterFailure.Replace("Created, but", "Updated, but", StringComparison.Ordinal));
+                return;
+            }
+
             // An earlier attempt sent the create request but never heard back: the object may exist. It's only
             // created again when the destination clearly doesn't have it.
             if (wasInterrupted)
@@ -222,6 +259,44 @@ public static class Deployer
             ? id
             : step.DisplayName;
     }
+
+    /// <summary>
+    /// An existing policy as it is now, in the same shape as when it was read for migrating: what an update is
+    /// compared with, and what rolling back puts back. With its assignments when the update replaces them.
+    /// </summary>
+    static async Task<JsonObject> ReadForUpdateAsync(IGraphReader graph, ResourceType type, string id, bool withAssignments, CancellationToken ct)
+    {
+        var raw = await graph.GetObjectAsync(type.ItemPath is { } itemPath ? Expand(itemPath, id) : ItemPath(type, id), ct);
+        var current = Normalizer.Normalize(raw, type);
+        if (withAssignments && type.AssignmentsPath is { } assignmentsPath)
+        {
+            current["assignments"] = new JsonArray((await graph.GetCollectionAsync(Expand(assignmentsPath, id), ct))
+                .Select(a =>
+                {
+                    var assignment = (JsonObject)Normalizer.Canonicalize(a)!;
+                    assignment.Remove("id");
+                    assignment.Remove("sourceId");
+                    return (JsonNode)assignment;
+                }).ToArray());
+        }
+        return current;
+    }
+
+    /// <summary>Changes an existing policy: PUT with the whole policy, or PATCH with what differs.</summary>
+    static async Task SendUpdateAsync(IGraphWriter graph, ResourceType type, string id, JsonObject values, CancellationToken ct)
+    {
+        if (type.UpdateWith == UpdateMethod.Put)
+        {
+            type.PrepareForCreate?.Invoke(values);
+            await graph.PutAsync(ItemPath(type, id), values, ct);
+        }
+        else if (values.Any(p => p.Key != "@odata.type"))
+        {
+            await graph.PatchAsync(ItemPath(type, id), values, ct);
+        }
+    }
+
+    static string ItemPath(ResourceType type, string id) => $"{type.CreatePath}/{Uri.EscapeDataString(id)}";
 
     /// <summary>
     /// Changes existing settings to the given values: with PATCH in Graph, or through Set, and through the Enable or
@@ -527,6 +602,36 @@ public static class Deployer
                 {
                     step.Status = StepStatus.RollbackFailed;
                     step.Message = $"Couldn't put the settings back: {ex.Message}";
+                }
+                await save();
+                changed?.Invoke(step);
+                continue;
+            }
+
+            // A policy that was updated rather than created: it was there before, so it's put back, not deleted.
+            if (step.UpdateOf is { } updatedId)
+            {
+                if (step.Previous is null || step.Status is StepStatus.Pending or StepStatus.Skipped or StepStatus.RolledBack)
+                    continue;
+                try
+                {
+                    var type = ResourceRegistry.Get(step.TargetType);
+                    var graph = tenant.WriterFor(type);
+                    var previous = (JsonObject)step.Previous.DeepClone();
+                    var assignments = previous["assignments"] as JsonArray;
+                    previous.Remove("assignments");
+                    if (type.UpdateWith == UpdateMethod.Patch && step.Body["@odata.type"] is { } odataType)
+                        previous["@odata.type"] = odataType.DeepClone();
+                    await SendUpdateAsync(graph, type, updatedId, previous, inFlight);
+                    if (assignments is not null && type.AssignPath is { } assignPath)
+                        await graph.PostAsync(Expand(assignPath, updatedId), new JsonObject { [type.AssignBodyProperty] = assignments.DeepClone() }, inFlight);
+                    step.Status = StepStatus.RolledBack;
+                    step.Message = "Put back as it was.";
+                }
+                catch (Exception ex) when (ex is not OperationCanceledException)
+                {
+                    step.Status = StepStatus.RollbackFailed;
+                    step.Message = $"Couldn't put it back as it was: {ex.Message}";
                 }
                 await save();
                 changed?.Invoke(step);

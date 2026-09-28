@@ -360,7 +360,8 @@ public sealed class MigrationService(AuthService auth, MigrationState state, Mov
             var plan = await Matcher.BuildAsync(new ReadOnlyGraph(destination.Clients.Graph), destination.Clients, restoring, snapshot.Items, null, progress, ct);
             progress.Report("Checking the restore…");
             var report = await PreflightCheck.RunAsync(destination.Clients, destination.Info, restoring, plan,
-                new PreflightChoices { KeepOriginalState = keepOriginalState, SkipBlocked = leaveOutBlocked }, progress, ct);
+                // A policy changed since is the same policy, perhaps renamed: it's updated by its ID rather than created again.
+                new PreflightChoices { KeepOriginalState = keepOriginalState, SkipBlocked = leaveOutBlocked, UpdateById = true }, progress, ct);
             state.SetRestore(new RestorePlan(snapshot, report, plan));
             DiagnosticLog.Info($"Checked a restore of {restoring.Count} items: {report.CreateCount} to create or put back, {report.BlockedCount} blocked.");
         });

@@ -13,6 +13,9 @@ public interface IGraphWriter : IGraphReader
     /// <summary>Changes the given properties of an existing object, such as a tenant-wide settings object.</summary>
     Task PatchAsync(string path, JsonNode body, CancellationToken ct = default);
 
+    /// <summary>Replaces an existing object with the whole of the given one (settings catalog policies can't be patched).</summary>
+    Task PutAsync(string path, JsonNode body, CancellationToken ct = default);
+
     Task DeleteAsync(string path, CancellationToken ct = default);
 }
 
@@ -84,6 +87,12 @@ public sealed class DeployStep
     public JsonObject? Previous { get; set; }
 
     [JsonIgnore] public bool IsSettings => !IsGroup && ResourceRegistry.Get(TargetType).IsSettings;
+
+    /// <summary>For a policy that updates one already in the destination rather than creating it: that policy's ID.</summary>
+    public string? UpdateOf { get; init; }
+
+    /// <summary>True when this step changes something that was already there (settings, or an existing policy): rollback puts it back rather than deleting it.</summary>
+    [JsonIgnore] public bool IsChange => IsSettings || UpdateOf is not null;
 
     public StepStatus Status { get; set; }
     public string? DestinationId { get; set; }

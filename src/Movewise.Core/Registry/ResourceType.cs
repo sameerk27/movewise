@@ -45,6 +45,18 @@ public sealed record ReferenceRule(string Path, string TargetType)
         Path.Contains("exclude", StringComparison.OrdinalIgnoreCase) || Path.Contains("ExceptIf", StringComparison.OrdinalIgnoreCase) || Path.Contains("Exception", StringComparison.Ordinal);
 }
 
+/// <summary>How an existing policy is changed.</summary>
+public enum UpdateMethod
+{
+    None,
+
+    /// <summary>Only the changed properties are sent.</summary>
+    Patch,
+
+    /// <summary>The whole policy is sent, replacing it (settings catalog policies).</summary>
+    Put,
+}
+
 /// <summary>Which API reads and writes a policy type.</summary>
 public enum Backend
 {
@@ -204,6 +216,18 @@ public sealed record ResourceType(
     /// since a new rule's priority has to fit among the destination's rules.
     /// </summary>
     public bool KeepsPriority { get; init; }
+
+    /// <summary>How an existing policy of this type is changed to match another: PATCH (the default for Graph), PUT, or not at all.</summary>
+    public UpdateMethod UpdateWith { get; init; } = UpdateMethod.Patch;
+
+    /// <summary>Properties an update can't change, such as a compliance policy's actions, which have their own API.</summary>
+    public IReadOnlyList<string> NotUpdatable { get; init; } = [];
+
+    /// <summary>
+    /// True when Movewise can change an existing policy of this type, rather than only create new ones. For now that's
+    /// Graph types; Exchange, Defender for Office 365, Purview and Teams policies each have their own Set cmdlets.
+    /// </summary>
+    public bool CanUpdate => UpdateWith != UpdateMethod.None && !UsesPowerShell && !IsSettings && !ReferenceOnly;
 
     /// <summary>For settings that exist in every tenant and are changed, not created. See <see cref="SettingsCmdlets"/>.</summary>
     public SettingsCmdlets? Settings { get; init; }

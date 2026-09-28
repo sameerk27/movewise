@@ -213,6 +213,8 @@ public static class ResourceRegistry
             [])
         {
             PrepareForCreate = body => body.Remove("combinationConfigurations"),
+            // Its allowed combinations change through an action of their own, not an update.
+            UpdateWith = UpdateMethod.None,
         },
 
         new ResourceType(
@@ -349,6 +351,8 @@ public static class ResourceRegistry
             AssignmentsPath = $"{DeviceManagement}/configurationPolicies('{{id}}')/assignments",
             AssignPath = $"{DeviceManagement}/configurationPolicies('{{id}}')/assign",
             PrepareForCreate = body => StripIds(body, "settings"),
+            // Settings catalog policies can't be patched: an update sends the whole policy, settings included.
+            UpdateWith = UpdateMethod.Put,
         },
 
         new ResourceType(
@@ -426,6 +430,8 @@ public static class ResourceRegistry
             ItemPath = $"{DeviceManagement}/deviceCompliancePolicies/{{id}}?$expand=scheduledActionsForRule($expand=scheduledActionConfigurations)",
             AssignmentsPath = $"{DeviceManagement}/deviceCompliancePolicies/{{id}}/assignments",
             AssignPath = $"{DeviceManagement}/deviceCompliancePolicies/{{id}}/assign",
+            // Actions for noncompliance have an API of their own; an update leaves them as they are.
+            NotUpdatable = ["scheduledActionsForRule"],
             PrepareForCreate = body =>
             {
                 StripIds(body, "scheduledActionsForRule");
@@ -997,6 +1003,8 @@ public static class ResourceRegistry
             [])
         {
             Backend = Backend.DefenderApi,
+            // The Defender API updates an indicator by posting it again, not with PATCH.
+            UpdateWith = UpdateMethod.None,
             // Expired ones would be refused, and do nothing anyway.
             Include = item => item["expirationTime"] is not JsonValue expires
                 || !expires.TryGetValue<string>(out var text)

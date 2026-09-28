@@ -189,6 +189,21 @@ sealed class DemoGraph : IGraphWriter
         }
     }
 
+    /// <summary>Replaces an item of a collection with the given one; its ID and hidden parts (assignments) stay.</summary>
+    public async Task PutAsync(string path, JsonNode body, CancellationToken ct = default)
+    {
+        await Pause(ct);
+        lock (_gate)
+        {
+            var (basePath, _) = Split(path);
+            var (item, _) = Find(basePath) ?? throw NotFound(path);
+            foreach (var name in item.Select(p => p.Key).Where(k => k != "id" && !k.StartsWith(Hidden, StringComparison.Ordinal)).ToList())
+                item.Remove(name);
+            foreach (var (name, value) in body.AsObject().Where(p => p.Key != "id"))
+                item[name] = value?.DeepClone();
+        }
+    }
+
     public async Task DeleteAsync(string path, CancellationToken ct = default)
     {
         await Pause(ct);

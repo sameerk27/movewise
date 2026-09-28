@@ -337,7 +337,7 @@ static class DemoTenants
         .Add("v1.0/policies/authenticationStrengthPolicies")
         .Add("v1.0/identity/conditionalAccess/policies", J("""
             { "id": "f1", "displayName": "CA002 - Block legacy authentication", "state": "enabled",
-              "conditions": { "clientAppTypes": ["exchangeActiveSync", "other"], "users": { "includeUsers": ["All"] }, "applications": { "includeApplications": ["All"] } },
+              "conditions": { "clientAppTypes": ["exchangeActiveSync"], "users": { "includeUsers": ["All"] }, "applications": { "includeApplications": ["All"] } },
               "grantControls": { "operator": "OR", "builtInControls": ["block"] } }
             """))
         .Add("beta/deviceManagement/roleScopeTags", J("""{ "id": "0", "displayName": "Default", "isBuiltIn": true }"""))

@@ -317,10 +317,10 @@
 
     static string NotRestorable(ComparisonReport report)
     {
-        var changed = report.Items.Count(i => i.Difference == Difference.Different && !i.Type.IsSettings);
+        var changed = report.Items.Count(i => i.Difference == Difference.Different && !i.CanRestore);
         var added = report.Count(Difference.OnlyInSecond);
         var parts = new List<string>();
-        if (changed > 0) parts.Add($"{changed} polic{(changed == 1 ? "y" : "ies")} changed since the snapshot can't be put back yet: Movewise creates policies but doesn't edit existing ones");
+        if (changed > 0) parts.Add($"{changed} Exchange, Defender for Office 365, Purview or Teams polic{(changed == 1 ? "y" : "ies")} changed since can't be put back yet: Movewise can't change those in place");
         if (added > 0) parts.Add($"{added} added since {(added == 1 ? "is" : "are")} left alone: a restore never deletes anything");
         return parts.Count == 0 ? "" : string.Join(". ", parts) + ".";
     }
