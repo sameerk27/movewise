@@ -8,6 +8,9 @@ using Movewise.Core.Tenants;
 
 namespace Movewise.App.State;
 
+/// <summary>A restore from a snapshot that pre-flight has checked: what it would create or put back, and the matches it uses.</summary>
+public sealed record RestorePlan(Movewise.Core.Compare.Snapshot Snapshot, PreflightReport Report, MappingPlan Mapping);
+
 /// <summary>A signed-in tenant: who signed in, what the tenant is, and whether their roles are enough.</summary>
 public sealed class TenantConnection
 {
@@ -100,10 +103,31 @@ public sealed class MigrationState
 
     public TenantConnection? Get(TenantRole role) => role == TenantRole.Source ? Source : Destination;
 
+    /// <summary>The last comparison on the Compare screen. Cleared when either tenant changes.</summary>
+    public Movewise.Core.Compare.ComparisonReport? Comparison { get; private set; }
+
+    public void SetComparison(Movewise.Core.Compare.ComparisonReport? report)
+    {
+        Comparison = report;
+        Restore = null;
+        Changed?.Invoke();
+    }
+
+    /// <summary>The checked restore from a snapshot, waiting to be prepared as a run. Cleared with the comparison.</summary>
+    public RestorePlan? Restore { get; private set; }
+
+    public void SetRestore(RestorePlan? restore)
+    {
+        Restore = restore;
+        Changed?.Invoke();
+    }
+
     public void Set(TenantRole role, TenantConnection? connection)
     {
-        // Choices made for one pair of tenants don't carry over to another.
+        // Choices made for one pair of tenants don't carry over to another, and neither does a comparison.
         PreflightChoices = new PreflightChoices();
+        Comparison = null;
+        Restore = null;
         if (role == TenantRole.Source)
         {
             Source = connection;

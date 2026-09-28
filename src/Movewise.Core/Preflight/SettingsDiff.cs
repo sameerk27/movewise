@@ -37,8 +37,11 @@ public static class SettingsDiff
         || property.Equals("Name", StringComparison.OrdinalIgnoreCase)
         || property.Equals("Identity", StringComparison.OrdinalIgnoreCase);
 
-    // Nothing, an empty list and an empty text all mean "not set".
-    static bool Same(JsonNode? a, JsonNode? b)
+    /// <summary>
+    /// True when two values mean the same: nothing, an empty list and an empty text all mean "not set"; lists of
+    /// addresses, domains and the like are compared in any order; text ignores case.
+    /// </summary>
+    public static bool Same(JsonNode? a, JsonNode? b)
     {
         if (IsEmpty(a) && IsEmpty(b))
             return true;

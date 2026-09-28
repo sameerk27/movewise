@@ -23,6 +23,12 @@ public sealed record PreflightChoices
 
     /// <summary>Deploy the policies that can be created and leave the blocked ones out, instead of fixing every blocker first.</summary>
     public bool SkipBlocked { get; init; }
+
+    /// <summary>
+    /// Create policies as they were, switched on, instead of in report-only or test mode. Only offered when restoring
+    /// a tenant from its own snapshot, where the policies were already in use as they are.
+    /// </summary>
+    public bool KeepOriginalState { get; init; }
 }
 
 /// <summary>Which choice a finding lets the admin make on the Pre-flight screen.</summary>
@@ -328,7 +334,13 @@ public static partial class PreflightCheck
         }
 
         // 5. Build every policy as it will be created, and look at the result.
-        var options = new TransformOptions { Disable = disable, Rename = rename };
+        var options = new TransformOptions
+        {
+            Disable = disable,
+            Rename = rename,
+            ConditionalAccessReportOnly = !choices.KeepOriginalState,
+            MakeSafe = !choices.KeepOriginalState,
+        };
         var transformed = selected.Select(p => Transformer.Transform(p, plan, options)).ToList();
 
         // The names a renamed policy and its rules end up with must be free too.

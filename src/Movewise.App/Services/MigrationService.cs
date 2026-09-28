@@ -1,6 +1,7 @@
 using Microsoft.Identity.Client;
 using Movewise.App.State;
 using Movewise.Core.Access;
+using Movewise.Core.Compare;
 using Movewise.Core.Deploy;
 using Movewise.Core.Export;
 using Movewise.Core.Mapping;
@@ -271,6 +272,139 @@ public sealed class MigrationService(AuthService auth, MigrationState state, Mov
         state.SetManualSetup(manual);
         DiagnosticLog.Info($"Discovered {result.Items.Count} policies." + string.Concat(result.Warnings.Select(w => $" Couldn't read {w.Type.Id}: {w.Message}")));
     });
+
+    // ---------- Compare (only reads; nothing changes in either tenant) ----------
+
+    // Demo snapshots stay out of the real ones, like demo runs.
+    string? SnapshotsRoot => state.Source?.IsDemo == true || state.Destination?.IsDemo == true
+        ? System.IO.Path.Combine(Demo.DemoTenants.RunsRoot, "Snapshots")
+        : null;
+
+    static IEnumerable<ResourceType> TypesOf(IReadOnlyCollection<M365Service> services) =>
+        Supported.Where(services.Contains).SelectMany(ResourceRegistry.For);
+
+    /// <summary>Compares the source with the destination, in the destination's terms.</summary>
+    public Task CompareTenantsAsync(IReadOnlyCollection<M365Service> services, IProgress<string> progress, CancellationToken ct = default) =>
+        Logged("Comparing tenants", async () =>
+        {
+            RefuseWhileWorking();
+            var source = state.Source ?? throw new InvalidOperationException("Sign in to the source tenant first.");
+            var destination = state.Destination ?? throw new InvalidOperationException("Sign in to the destination tenant first.");
+            var report = await TenantComparer.CompareTenantsAsync(source.Clients, source.Info.DisplayName, destination.Clients, destination.Info.DisplayName,
+                TypesOf(services), progress, ct);
+            EnsureSameTenants(source, destination);
+            state.SetComparison(report);
+            DiagnosticLog.Info($"Compared tenants: {report.Count(Difference.OnlyInFirst)} only in the source, {report.Count(Difference.OnlyInSecond)} only in the destination, " +
+                $"{report.Count(Difference.Different)} different, {report.Count(Difference.Same)} the same.");
+        });
+
+    /// <summary>Saves what one tenant has now, to compare it with later.</summary>
+    public async Task<Snapshot> SaveSnapshotAsync(TenantRole role, IReadOnlyCollection<M365Service> services, IProgress<string> progress, CancellationToken ct = default)
+    {
+        Snapshot? saved = null;
+        await Logged("Saving a snapshot", async () =>
+        {
+            RefuseWhileWorking();
+            var tenant = state.Get(role) ?? throw new InvalidOperationException($"Sign in to the {role.ToString().ToLowerInvariant()} tenant first.");
+            progress.Report($"Reading {tenant.Info.DisplayName}…");
+            var types = TypesOf(services).ToList();
+            var result = await Exporter.ExportAsync(tenant.Clients, types, progress, ct);
+            // Types that couldn't be read are left out, so they don't look emptied when compared later.
+            var read = types.Where(t => result.Warnings.All(w => w.Type != t)).ToList();
+            saved = await SnapshotStore.SaveAsync(new Snapshot(tenant.Info.TenantId, tenant.Info.DisplayName, DateTimeOffset.Now, read, result.Items), SnapshotsRoot, ct);
+            DiagnosticLog.Info($"Saved a snapshot of {result.Items.Count} items.");
+        });
+        return saved!;
+    }
+
+    /// <summary>Snapshots of the tenants signed in now, newest first.</summary>
+    public async Task<IReadOnlyList<Snapshot>> ListSnapshotsAsync(CancellationToken ct = default)
+    {
+        var tenants = new[] { state.Source?.Info.TenantId, state.Destination?.Info.TenantId }.OfType<string>().ToHashSet(StringComparer.OrdinalIgnoreCase);
+        return (await SnapshotStore.ListAsync(SnapshotsRoot, ct)).Where(s => tenants.Contains(s.TenantId)).ToList();
+    }
+
+    /// <summary>Compares a tenant now with an earlier snapshot of it.</summary>
+    public Task CompareWithSnapshotAsync(Snapshot snapshot, IProgress<string> progress, CancellationToken ct = default) =>
+        Logged("Comparing with a snapshot", async () =>
+        {
+            RefuseWhileWorking();
+            // A snapshot is only ever compared with the tenant it was taken of.
+            var tenant = new[] { state.Source, state.Destination }.FirstOrDefault(t => string.Equals(t?.Info.TenantId, snapshot.TenantId, StringComparison.OrdinalIgnoreCase))
+                ?? throw new InvalidOperationException($"This snapshot is of {snapshot.TenantName}. Sign in to it to compare.");
+            var report = await TenantComparer.CompareWithSnapshotAsync(snapshot, tenant.Clients, tenant.Info.DisplayName, progress, ct);
+            state.SetComparison(report);
+            DiagnosticLog.Info($"Compared with a snapshot: {report.Count(Difference.OnlyInFirst)} removed, {report.Count(Difference.OnlyInSecond)} added, " +
+                $"{report.Count(Difference.Different)} changed, {report.Count(Difference.Same)} the same.");
+        });
+
+    // ---------- Restore from a snapshot (writes, but only into the destination) ----------
+
+    /// <summary>
+    /// Checks putting back what changed since a snapshot: removed policies recreated, changed settings set back. Runs
+    /// pre-flight against the tenant, which must be signed in as the destination: Movewise never writes to the source.
+    /// </summary>
+    public Task CheckRestoreAsync(IReadOnlyCollection<ComparedItem> items, bool keepOriginalState, bool leaveOutBlocked,
+        IProgress<string> progress, CancellationToken ct = default) =>
+        Logged("Checking a restore", async () =>
+        {
+            RefuseWhileWorking();
+            var snapshot = state.Comparison?.Snapshot ?? throw new InvalidOperationException("Compare the tenant with a snapshot first.");
+            var destination = RestoreTarget(snapshot);
+            var restoring = items.Where(i => i.CanRestore).Select(i => i.FirstSource!).ToList();
+            if (restoring.Count == 0)
+                throw new InvalidOperationException("Choose at least one policy or setting to put back.");
+
+            // The snapshot is of this tenant, so what its policies point at is looked up in the tenant itself.
+            progress.Report("Matching groups, users and other objects…");
+            var plan = await Matcher.BuildAsync(new ReadOnlyGraph(destination.Clients.Graph), destination.Clients, restoring, snapshot.Items, null, progress, ct);
+            progress.Report("Checking the restore…");
+            var report = await PreflightCheck.RunAsync(destination.Clients, destination.Info, restoring, plan,
+                new PreflightChoices { KeepOriginalState = keepOriginalState, SkipBlocked = leaveOutBlocked }, progress, ct);
+            state.SetRestore(new RestorePlan(snapshot, report, plan));
+            DiagnosticLog.Info($"Checked a restore of {restoring.Count} items: {report.CreateCount} to create or put back, {report.BlockedCount} blocked.");
+        });
+
+    /// <summary>Saves the checked restore as a run and opens it on the Deploy screen, where it's started, and can be rolled back.</summary>
+    public async Task PrepareRestoreAsync(CancellationToken ct = default)
+    {
+        RefuseWhileWorking();
+        if (IsUpdating)
+            throw new InvalidOperationException(UpdatingMessage);
+        var restore = state.Restore ?? throw new InvalidOperationException("Check the restore first.");
+        var destination = RestoreTarget(restore.Snapshot);
+        if (!restore.Report.CanDeploy)
+            throw new InvalidOperationException("There's nothing to put back, or pre-flight found blockers. Fix them, or leave the blocked ones out.");
+
+        await Logged("Preparing a restore", async () =>
+        {
+            // The run reads "Snapshot of … → tenant", so it's clear on the Deploy screen and in the run list what it was.
+            var from = destination.Info with { DisplayName = $"Snapshot of {restore.Snapshot.Taken.LocalDateTime:d MMM yyyy HH:mm}" };
+            var run = DeployPlanner.Plan(restore.Report, restore.Mapping, from, destination.Info);
+            run.Folder = RunStore.NewRunFolder("snapshot", destination.Info.InitialDomain, run.RunId, RunsRoot);
+            await RunStore.SaveAsync(run, ct);
+            state.SetRestore(null);
+            state.SetRun(run);
+            DiagnosticLog.Info($"Prepared restore run {run.RunId}: {run.Steps.Count} objects.");
+        });
+    }
+
+    /// <summary>The tenant a snapshot is restored into: its own, signed in as the destination.</summary>
+    TenantConnection RestoreTarget(Snapshot snapshot)
+    {
+        var destination = state.Destination;
+        if (destination is null || !string.Equals(destination.Info.TenantId, snapshot.TenantId, StringComparison.OrdinalIgnoreCase))
+            throw new InvalidOperationException($"To restore {snapshot.TenantName}, sign in to it as the destination. Movewise never changes the source.");
+        if (state.Run is { } run && run.RemainingCount > 0 && run.RolledBack is null)
+            throw new InvalidOperationException("Another run into this tenant isn't finished. Finish it or close it on the Deploy screen first.");
+        return destination;
+    }
+
+    void RefuseWhileWorking()
+    {
+        if (IsWorking)
+            throw new InvalidOperationException("A deployment is being prepared or running. Compare once it has finished.");
+    }
 
     /// <summary>Matches everything the selected policies point at, keeping decisions the admin already made.</summary>
     public Task BuildMappingAsync(IProgress<string> progress, CancellationToken ct = default) => Logged("Matching", async () =>

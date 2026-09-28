@@ -37,6 +37,17 @@ flowchart LR
 | **Pre-flight** | Every policy is rewritten for the destination and checked: unmatched objects, name conflicts, missing licenses and roles, removed exclusions, and a before/after view per policy |
 | **Deploy** | Groups and policies are created in order, with progress saved after every object. A run survives a crash, a stop or a dropped connection |
 
+### Compare and drift
+
+The **Compare** screen only reads; nothing changes in either tenant.
+
+- **Source with destination.** Shows which policies and settings are only in one tenant, and which are set differently. The source's policies are first put in the destination's terms (groups, users, locations matched as for a migration), so a group with a different ID isn't a difference.
+- **A tenant with a snapshot.** Save a snapshot of a tenant, and later see what was added, removed or changed since: drift, or a check after a change window. Snapshots are kept in `%LOCALAPPDATA%\MovewiseData\Snapshots`.
+
+Each item shows both versions side by side, with only the settings that differ. The comparison exports to CSV.
+
+**Restore from a snapshot.** After comparing a tenant with a snapshot, **Restore…** recreates what was removed since and puts changed settings back as they were. It runs the same pre-flight checks as a migration, then opens on the Deploy screen as a run you start, and can roll back. Restored policies come back in report-only or test mode unless you choose to recreate them as they were. A restore never deletes anything added since, and policies changed since aren't put back yet (Movewise creates policies but doesn't edit existing ones). A snapshot can only be restored into the tenant it was taken of, signed in as the destination: the source is never changed.
+
 ### Safe by design
 
 - **The source is never changed.** The source's Graph client can only read, and its PowerShell sessions refuse anything but `Get-` cmdlets. See [why the source stays unchanged](docs/app-registration.md#why-the-source-stays-unchanged).

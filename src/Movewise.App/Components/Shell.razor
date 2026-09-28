@@ -2,6 +2,7 @@
 @inject MigrationState State
 @inject MigrationService Migration
 @inject UpdateService Updates
+@inject NavigationManager Navigation
 @implements IDisposable
 
 <div class="app">
@@ -13,7 +14,9 @@
             <span>Movewise</span>
         </div>
         <nav class="nav" aria-label="Main">
-            <NavLink href="" Match="NavLinkMatch.Prefix" ActiveClass="on">Migration</NavLink>
+            @* Every migration step lives at the root ("", discover, map…); Compare has its own. *@
+            <a href="" class="@(OnCompare ? "" : "on")">Migration</a>
+            <a href="compare" class="@(OnCompare ? "on" : "")">Compare</a>
         </nav>
         <div class="sidebar-foot">
             <div class="side-tenant">
@@ -51,6 +54,7 @@
     {
         State.Changed += OnStateChanged;
         Updates.Changed += OnStateChanged;
+        Navigation.LocationChanged += OnLocationChanged;
     }
 
     async Task UpdateAsync()
@@ -83,11 +87,16 @@
         }
     }
 
+    bool OnCompare => Navigation.ToBaseRelativePath(Navigation.Uri).StartsWith("compare", StringComparison.OrdinalIgnoreCase);
+
+    void OnLocationChanged(object? sender, Microsoft.AspNetCore.Components.Routing.LocationChangedEventArgs e) => InvokeAsync(StateHasChanged);
+
     void OnStateChanged() => InvokeAsync(StateHasChanged);
 
     public void Dispose()
     {
         State.Changed -= OnStateChanged;
         Updates.Changed -= OnStateChanged;
+        Navigation.LocationChanged -= OnLocationChanged;
     }
 }
