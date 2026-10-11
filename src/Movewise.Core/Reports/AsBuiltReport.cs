@@ -8,12 +8,21 @@ namespace Movewise.Core.Reports;
 
 public static class AsBuiltReport
 {
+    // Relaxed escaping keeps apostrophes and accented letters readable; the text is HTML-encoded afterwards anyway.
+    static readonly JsonSerializerOptions Indented = new()
+    {
+        WriteIndented = true,
+        Encoder = System.Text.Encodings.Web.JavaScriptEncoder.UnsafeRelaxedJsonEscaping,
+    };
+
+    static string Html(string? text) => System.Web.HttpUtility.HtmlEncode(text ?? "");
+
     public static string GenerateHtml(TenantInfo tenant, IEnumerable<ExportedResource> items)
     {
         var sb = new StringBuilder();
         sb.AppendLine("<!DOCTYPE html>");
         sb.AppendLine("<html><head><meta charset=\"utf-8\">");
-        sb.AppendLine($"<title>As-Built Documentation - {tenant.DisplayName}</title>");
+        sb.AppendLine($"<title>As-Built Documentation - {Html(tenant.DisplayName)}</title>");
         sb.AppendLine("<style>");
         sb.AppendLine("body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif; line-height: 1.6; color: #333; max-width: 1200px; margin: 0 auto; padding: 20px; }");
         sb.AppendLine("h1 { border-bottom: 2px solid #0078D4; padding-bottom: 10px; color: #0078D4; }");
@@ -28,31 +37,25 @@ public static class AsBuiltReport
         sb.AppendLine("</head><body>");
 
         sb.AppendLine($"<h1>As-Built Documentation</h1>");
-        sb.AppendLine($"<div class='meta'>Tenant: <strong>{tenant.DisplayName}</strong> ({tenant.InitialDomain})<br/>Generated: {DateTimeOffset.Now:g}</div>");
+        sb.AppendLine($"<div class='meta'>Tenant: <strong>{Html(tenant.DisplayName)}</strong> ({Html(tenant.InitialDomain)})<br/>Generated: {Html(DateTimeOffset.Now.ToString("yyyy-MM-dd HH:mm zzz", System.Globalization.CultureInfo.InvariantCulture))}</div>");
 
         var byType = items.GroupBy(i => i.Type).OrderBy(g => g.Key.Service).ThenBy(g => g.Key.DisplayName);
 
         foreach (var group in byType)
         {
-            sb.AppendLine($"<h2>{group.Key.DisplayName}</h2>");
+            sb.AppendLine($"<h2>{Html(group.Key.DisplayName)}</h2>");
             foreach (var item in group.OrderBy(i => i.DisplayName))
             {
                 sb.AppendLine($"<div class='policy'>");
-                sb.AppendLine($"<h3>{System.Web.HttpUtility.HtmlEncode(item.DisplayName)}</h3>");
-                
-                var cleanSettings = item.Settings.DeepClone().AsObject();
-                // Remove some internal/noise properties if needed, but for now we just dump formatted JSON
-                var jsonOptions = new JsonSerializerOptions { WriteIndented = true };
-                var json = JsonSerializer.Serialize(cleanSettings, jsonOptions);
-                
-                sb.AppendLine($"<pre><code>{System.Web.HttpUtility.HtmlEncode(json)}</code></pre>");
+                sb.AppendLine($"<h3>{Html(item.DisplayName)}</h3>");
+                sb.AppendLine($"<pre><code>{Html(item.Settings.ToJsonString(Indented))}</code></pre>");
 
                 if (item.Dependencies.Count > 0)
                 {
                     sb.AppendLine("<div class='dependencies'><strong>Dependencies:</strong><ul>");
                     foreach (var dep in item.Dependencies.OrderBy(d => d.Value))
                     {
-                        sb.AppendLine($"<li>{System.Web.HttpUtility.HtmlEncode(dep.TargetType)}: {System.Web.HttpUtility.HtmlEncode(dep.Value)} (at <code>{System.Web.HttpUtility.HtmlEncode(dep.Path)}</code>)</li>");
+                        sb.AppendLine($"<li>{Html(dep.TargetType)}: {Html(dep.Value)} (at <code>{Html(dep.Path)}</code>)</li>");
                     }
                     sb.AppendLine("</ul></div>");
                 }

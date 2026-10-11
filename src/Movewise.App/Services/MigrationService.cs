@@ -201,7 +201,8 @@ public sealed class MigrationService(AuthService auth, MigrationState state, Mov
         var connection = state.Get(role);
         if (connection is null)
             return;
-        if (connection.IsDemo)
+        // Leaving the demo leaves both sample tenants; dropping a demo baseline keeps the destination.
+        if (connection.IsDemo && !connection.IsBaseline)
         {
             var other = state.Get(role == TenantRole.Source ? TenantRole.Destination : TenantRole.Source);
             if (other is { IsDemo: true })
@@ -359,6 +360,9 @@ public sealed class MigrationService(AuthService auth, MigrationState state, Mov
             var tenant = new[] { state.Source, state.Destination }.FirstOrDefault(t => t is { IsBaseline: false } && string.Equals(t.Info.TenantId, snapshot.TenantId, StringComparison.OrdinalIgnoreCase))
                 ?? throw new InvalidOperationException($"This snapshot is of {snapshot.TenantName}. Sign in to it to compare.");
             var report = await TenantComparer.CompareWithSnapshotAsync(snapshot, tenant.Clients, tenant.Info.DisplayName, progress, ct);
+            // The tenant may have been signed out while it was read; its drift and restore mustn't show for another.
+            if (!ReferenceEquals(state.Source, tenant) && !ReferenceEquals(state.Destination, tenant))
+                throw new InvalidOperationException("The tenant was signed out while this was running, so its results were discarded. Start again.");
             state.SetComparison(report);
             DiagnosticLog.Info($"Compared with a snapshot: {report.Count(Difference.OnlyInFirst)} removed, {report.Count(Difference.OnlyInSecond)} added, " +
                 $"{report.Count(Difference.Different)} changed, {report.Count(Difference.Same)} the same.");

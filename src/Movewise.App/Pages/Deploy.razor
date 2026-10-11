@@ -179,7 +179,7 @@
                 }
             </section>
 
-            @if (Run.Completed is not null && Run.RolledBack is null && !Migration.IsBusy)
+            @if (Run.Completed is not null && Run.RolledBack is null && !PartlyRolledBack && !Migration.IsBusy)
             {
                 <section class="card">
                     <h2>After deploying</h2>
@@ -228,7 +228,7 @@
             }
             else
             {
-                @if (Run.RolledBack is null && Run.RemainingCount == 0)
+                @if (Run.RolledBack is null && !PartlyRolledBack && Run.RemainingCount == 0)
                 {
                     <a class="btn primary" href="compare">Compare tenants</a>
                 }
@@ -265,14 +265,19 @@
         .Select(s => s.DisplayName)
         .ToList() ?? [];
 
+    // A rollback that was stopped or failed partway: some of the run is gone, so it isn't "Deployed".
+    bool PartlyRolledBack => Run!.RolledBack is null && Run.Steps.Any(s => s.Status is StepStatus.RolledBack or StepStatus.RollbackFailed);
+
     string RunText => Migration.IsBusy ? "Running"
         : Run!.RolledBack is not null ? "Rolled back"
+        : PartlyRolledBack ? "Partly rolled back"
         : Run.FailedCount > 0 ? $"{Run.FailedCount} failed"
         : Run.RemainingCount > 0 ? "Not finished"
         : "Deployed";
 
     string RunClass => Migration.IsBusy ? "info"
         : Run!.RolledBack is not null ? "neutral"
+        : PartlyRolledBack ? "warn"
         : Run.FailedCount > 0 ? "bad"
         : Run.RemainingCount > 0 ? "warn"
         : "ok";

@@ -55,6 +55,20 @@ public class CompareTests
     }
 
     [Fact]
+    public async Task A_type_that_cant_be_read_now_isnt_shown_as_deleted()
+    {
+        var then = new FakeGraph().Collection(CaPath, Policy("CA001 MFA", "enabled", "g1"));
+        var snapshot = new Snapshot("t1", "Contoso", DateTimeOffset.Now.AddDays(-7), [ConditionalAccess],
+            (await Exporter.ExportAsync(then, [ConditionalAccess])).Items);
+
+        // Throttled, or the admin lost the role: nothing comes back for the type.
+        var report = await TenantComparer.CompareWithSnapshotAsync(snapshot, new TenantClients(new ReadOnlyGraph(new FakeGraph().Failing(CaPath))), "Contoso");
+
+        Assert.Empty(report.Items);
+        Assert.NotEmpty(report.Warnings);
+    }
+
+    [Fact]
     public async Task Drift_pairs_by_id_so_a_renamed_policy_shows_as_changed_not_removed_and_added()
     {
         var then = new FakeGraph().Collection(CaPath, Policy("CA001 MFA", "enabled", "g1"), Policy("CA002 Legacy", "enabled", "g1"));

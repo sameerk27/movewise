@@ -36,7 +36,7 @@
                     @foreach (var baseline in baselines)
                     {
                         var isShown = selected?.Path == baseline.Path;
-                        <button type="button" class="card pad stack @(isShown ? "baseline-on" : "")" aria-pressed="@isShown" @onclick="@(() => selected = baseline)">
+                        <button type="button" class="card pad stack @(isShown ? "baseline-on" : "")" aria-pressed="@(isShown ? "true" : "false")" @onclick="@(() => selected = baseline)">
                             <span class="head-row">
                                 <b>@baseline.Name</b>
                                 <span class="pill info">Saved</span>

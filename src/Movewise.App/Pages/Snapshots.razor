@@ -50,11 +50,11 @@
             <div class="preflight">
                 <section class="card table snapshot-table" aria-label="Snapshots">
                     <div class="snapshot-filter" role="group" aria-label="Tenant">
-                        <button class="chip @(tenantFilter is null ? "on" : "")" aria-pressed="@(tenantFilter is null)" @onclick="@(() => tenantFilter = null)">All tenants</button>
+                        <button class="chip @(tenantFilter is null ? "on" : "")" aria-pressed="@(tenantFilter is null ? "true" : "false")" @onclick="@(() => tenantFilter = null)">All tenants</button>
                         @foreach (var name in TenantNames)
                         {
                             var filter = name;
-                            <button class="chip @(tenantFilter == filter ? "on" : "")" aria-pressed="@(tenantFilter == filter)" @onclick="@(() => tenantFilter = filter)">@filter</button>
+                            <button class="chip @(tenantFilter == filter ? "on" : "")" aria-pressed="@(tenantFilter == filter ? "true" : "false")" @onclick="@(() => tenantFilter = filter)">@filter</button>
                         }
                     </div>
                     <div class="row head"><span>Tenant</span><span>Taken</span><span>Policies</span><span>Tenant state</span></div>

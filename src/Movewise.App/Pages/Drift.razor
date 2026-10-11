@@ -58,7 +58,7 @@
                     }
                     @foreach (var drift in drifts)
                     {
-                        <button type="button" class="row selectable @(selected == drift ? "selected" : "")" @onclick="@(() => selected = drift)">
+                        <button type="button" class="row selectable @(selected == drift ? "selected" : "")" aria-pressed="@(selected == drift ? "true" : "false")" @onclick="@(() => selected = drift)">
                             <span><span class="pill @PillClass(drift.Item.Difference)">@CompareCsv.Describe(drift.Report, drift.Item.Difference)</span></span>
                             <span class="strong">@drift.Item.Name</span>
                             <span class="muted small">@drift.Item.Type.DisplayName</span>

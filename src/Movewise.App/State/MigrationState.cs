@@ -82,6 +82,9 @@ public sealed class MigrationState
     public void RemoveService(M365Service service)
     {
         Services.Remove(service);
+        // The last dry run would still list them, and Deploy would count them as ready.
+        if (Exported.Any(e => e.Type.Service == service))
+            Preflight = null;
         Selected.ExceptWith(Exported.Where(e => e.Type.Service == service).Select(Key).ToList());
         Exported = Exported.Where(e => e.Type.Service != service).ToList();
         ExportWarnings = ExportWarnings.Where(w => w.Type.Service != service).ToList();

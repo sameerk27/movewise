@@ -14,8 +14,9 @@ public static partial class Redactor
     [GeneratedRegex(@"eyJ[A-Za-z0-9_-]{5,}\.[A-Za-z0-9_-]{5,}\.[A-Za-z0-9_-]*")]
     private static partial Regex Jwt();
 
-    // Also JSON, where the name is quoted: "access_token":"…". A quoted value goes whole, spaces and all.
-    [GeneratedRegex(@"(?i)\b(bearer|access_?token|refresh_?token|id_?token|client_?secret|secret_?text|api_?key|password)(""?\s*[:=]\s*|\s+)(?:("")(?:[^""\\]|\\.)*""|[^\s"",;]+)")]
+    // Also JSON, where the name is quoted: "access_token":"…". A quoted value goes whole, spaces and all, up to its
+    // closing quote or the end of the line, so a message cut off mid-value doesn't keep the rest of it.
+    [GeneratedRegex(@"(?i)\b(bearer|access_?token|refresh_?token|id_?token|client_?secret|secret_?text|api_?key|password)(""?\s*[:=]\s*|\s+)(?:("")(?:[^""\\\r\n]|\\.)*(?:""|(?=[\r\n])|$)|[^\s"",;]+)")]
     private static partial Regex Secret();
 
     // A Windows sign-in name, CONTOSO\anna. The domain part is in capitals, as Windows writes it, so paths are left alone.
@@ -41,8 +42,9 @@ public static partial class Redactor
     [GeneratedRegex(@"(?i)\b(?:[a-z0-9](?:[a-z0-9-]*[a-z0-9])?\.)+(?:com|net|org|edu|gov|mil|int|info|biz|io|co|ai|app|dev|cloud|tech|online|site|store|shop|xyz|me|tv|global|group|pro|eu|uk|us|ca|au|nz|in|de|fr|nl|be|ch|at|es|it|pt|se|no|dk|fi|ie|pl|cz|jp|cn|sg|hk|za|br|mx|ae|sa|qa|kr|tw|my|ph|th|vn|ar|cl|lu|gr|ro|hu|sk|si|hr|bg|lt|lv|ee|is|il|tr|ua|ng|ke|eg|pk|bd|lk)\b")]
     private static partial Regex DomainName();
 
-    // Every part capitalised and the rest in lower case, as .NET names are: System.Net, Microsoft.Graph.
-    [GeneratedRegex(@"^[A-Z][a-z0-9]*[A-Za-z0-9]*(?:\.[A-Z][a-z0-9]+[A-Za-z0-9]*)+$")]
+    // .NET names in error details: System.Net.Http, Microsoft.Graph, Movewise.Core. A domain can be written the same
+    // way (Fabrikam.Net), so only these namespaces are kept.
+    [GeneratedRegex(@"^(?:System|Microsoft|Movewise|Windows|Azure|Velopack)(?:\.[A-Z][A-Za-z0-9]*)+$")]
     private static partial Regex DotNetName();
 
     // The signed-in tenants' own domains, whatever they end in (contoso.consulting).

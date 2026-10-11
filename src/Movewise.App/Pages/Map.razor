@@ -87,7 +87,7 @@
                         {
                             var isSelected = selected?.Key == mapping.Key;
                             <button type="button" class="row selectable @(isSelected ? "selected" : "") @(mapping.IsResolved ? "" : "unresolved")"
-                                    aria-pressed="@isSelected" @onclick="@(() => Select(mapping))">
+                                    aria-pressed="@(isSelected ? "true" : "false")" @onclick="@(() => Select(mapping))">
                                 <span class="stack">
                                     <span class="strong">@mapping.Source.DisplayName</span>
                                     @if (mapping.Source.Detail is not null && mapping.Source.Detail != mapping.Source.DisplayName)
@@ -195,7 +195,7 @@
         </span>
         <div class="head-actions">
             <a class="btn ghost" href="discover">Back</a>
-            <a class="btn primary @(Plan is null || busy ? "disabled" : "")" href="preflight" aria-disabled="@(Plan is null || busy)">
+            <a class="btn primary @(Plan is null || busy ? "disabled" : "")" href="preflight" aria-disabled="@(Plan is null || busy ? "true" : "false")">
                 Run pre-flight checks
                 <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M5 12h14M13 6l6 6-6 6"></path></svg>
             </a>

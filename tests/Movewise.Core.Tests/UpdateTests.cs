@@ -208,7 +208,8 @@ public class UpdateTests
         Assert.Equal("Executives and the board", ruleSet["Comments"]!.GetValue<string>());
         var ruleNew = Assert.Single(shell.CallsTo("New-AntiPhishRule"));
         Assert.Equal("Execs - assistants", ruleNew["Name"]!.GetValue<string>());
-        Assert.Equal("Execs", ruleNew["AntiPhishPolicy"]!.GetValue<string>());
+        // Attached to the existing policy by its ID, which an update never renames.
+        Assert.Equal("ap-dst", ruleNew["AntiPhishPolicy"]!.GetValue<string>());
 
         await Deployer.RollbackAsync(tenant, run, () => Task.CompletedTask);
 

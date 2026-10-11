@@ -110,7 +110,9 @@ public static class TenantComparer
             return (Item: item, Settings: result.Desired, Notes: (IReadOnlyList<string>)notes);
         }).ToList();
 
-        var report = Pair(translated, second.Items, byId: false);
+        // A type that couldn't be read on one side would look as if all its policies were only on the other.
+        var unread = first.Warnings.Concat(second.Warnings).Select(w => w.Type).ToHashSet();
+        var report = Pair(translated.Where(t => !unread.Contains(t.Item.Type)).ToList(), second.Items.Where(i => !unread.Contains(i.Type)).ToList(), byId: false);
         return new ComparisonReport(sourceName, destinationName, false, report, [.. first.Warnings, .. second.Warnings]);
     }
 
@@ -122,7 +124,11 @@ public static class TenantComparer
         var now = await Exporter.ExportAsync(tenant, snapshot.Types, progress, ct);
         // Compared by name, but each item stays as it was saved, with its IDs: a restore recreates it from that.
         var named = ByName(snapshot.Items);
-        var before = snapshot.Items.Select((item, i) => (Item: item, Settings: named[i].Settings, Notes: (IReadOnlyList<string>)[])).ToList();
+        // A type that can't be read now would look as if every policy of it had been deleted, and offer to recreate them all.
+        var unread = now.Warnings.Select(w => w.Type).ToHashSet();
+        var before = snapshot.Items.Select((item, i) => (Item: item, Settings: named[i].Settings, Notes: (IReadOnlyList<string>)[]))
+            .Where(b => !unread.Contains(b.Item.Type))
+            .ToList();
         var report = Pair(before, ByName(now.Items), byId: true);
         return new ComparisonReport($"Snapshot of {snapshot.Taken.LocalDateTime:d MMM yyyy HH:mm}", tenantName, true, report, now.Warnings) { Snapshot = snapshot };
     }
@@ -254,11 +260,9 @@ public static class TenantComparer
             case JsonObject obj:
                 foreach (var name in obj.Select(p => p.Key).ToList())
                 {
-                    var pruned = Prune(obj[name]);
-                    if (pruned is null)
+                    // Prune empties a node in place, so only an emptied one needs removing.
+                    if (Prune(obj[name]) is null)
                         obj.Remove(name);
-                    else if (!ReferenceEquals(pruned, obj[name]))
-                        obj[name] = pruned;
                 }
                 return obj.Count == 0 ? null : obj;
             case JsonArray array:

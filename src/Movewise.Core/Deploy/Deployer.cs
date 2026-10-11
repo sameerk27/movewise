@@ -118,7 +118,7 @@ public static class Deployer
                 var missing = Resolve(values, run);
                 if (missing.Count > 0)
                 {
-                    await Update(StepStatus.Skipped, $"Needs {DeployPlanner.Names(missing, run.Steps, null)}, which couldn't be created.");
+                    await Skip(missing);
                     return;
                 }
 
@@ -136,7 +136,7 @@ public static class Deployer
                     await SetWithPowerShellAsync(shell, type.Cmdlets!.Set!, existingId, values, step, null, ct);
                     await Update(StepStatus.Created);
                     var ruleFailure = step.Rules is { } desiredRules
-                        ? await UpdateRulesAsync(shell, type, step, ResolvedRules(desiredRules, run), save, ct)
+                        ? await UpdateRulesAsync(shell, type, step, existingId, ResolvedRules(desiredRules, run), save, ct)
                         : null;
                     var settingsChanged = values.Select(p => p.Key).Concat(step.Rules is null ? [] : ["rules"]);
                     if (ruleFailure is null)
@@ -239,9 +239,12 @@ public static class Deployer
         }
         catch (Exception ex)
         {
-            await Update(StepStatus.Failed, step.DestinationId is null
-                ? ex.Message
-                : $"Created, but something after that failed: {ex.Message}");
+            // An update records the existing policy's ID before sending anything, so the status says whether it changed.
+            await Update(StepStatus.Failed, step.UpdateOf is not null
+                ? step.Status == StepStatus.Created ? $"Updated, but something after that failed: {ex.Message}" : $"Not updated: {ex.Message}"
+                : step.DestinationId is null
+                    ? ex.Message
+                    : $"Created, but something after that failed: {ex.Message}");
         }
     }
 
@@ -355,7 +358,8 @@ public static class Deployer
     /// and each it lacks is created. Rules only the destination has are left alone. Each is recorded when done
     /// ("set:" before the name for a changed one), so a retry does only the rest and rollback knows what to undo.
     /// </summary>
-    static async Task<string?> UpdateRulesAsync(IPowerShell shell, ResourceType type, DeployStep step, JsonArray rules, Func<Task> save, CancellationToken ct)
+    /// <param name="policyId">The existing policy's identity. Its name may differ from the source's, and an update never renames it.</param>
+    static async Task<string?> UpdateRulesAsync(IPowerShell shell, ResourceType type, DeployStep step, string policyId, JsonArray rules, Func<Task> save, CancellationToken ct)
     {
         var cmdlets = type.Rules!;
         var existing = (step.Previous?["rules"] as JsonArray ?? [])
@@ -386,7 +390,7 @@ public static class Deployer
                         continue;
                     var (parameters, notCopied) = PowerShellShape.ToParameters(rule, newTakes);
                     parameters["Name"] = name;
-                    parameters[cmdlets.PolicyParameter] = step.DisplayName;
+                    parameters[cmdlets.PolicyParameter] = policyId;
                     NoteNotCopied(step, notCopied, name);
                     await shell.InvokeAsync(cmdlets.New, parameters, ct);
                     step.CreatedRules.Add(name);

@@ -34,10 +34,11 @@ public static class CompareCsv
         _ => "Same",
     };
 
-    // Formulas are neutralized: a policy name that starts with "=" mustn't run in Excel.
+    // Formulas are neutralized: a policy name that starts with "=" mustn't run in Excel. A leading tab or carriage
+    // return can hide one from that check in some importers, so those are neutralized too.
     static string Quote(string value)
     {
-        if (value.Length > 0 && value[0] is '=' or '+' or '-' or '@')
+        if (value.Length > 0 && value[0] is '=' or '+' or '-' or '@' or '\t' or '\r')
             value = "'" + value;
         return "\"" + value.Replace("\"", "\"\"") + "\"";
     }

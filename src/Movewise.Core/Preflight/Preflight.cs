@@ -404,7 +404,11 @@ public static partial class PreflightCheck
                 var existing = (choices.UpdateById ? inDestination.Items.FirstOrDefault(d => string.Equals(d.SourceId, policy.SourceId, StringComparison.OrdinalIgnoreCase)) : null)
                     ?? inDestination.Items.FirstOrDefault(d => string.Equals(d.DisplayName, policy.DisplayName, StringComparison.OrdinalIgnoreCase));
                 if (existing is null)
+                {
+                    // It was found when names were checked, so creating it would make a second one (or fail on the name).
+                    Add(blocked, policy, "It's in the destination, but Movewise couldn't read that policy to update it. Run pre-flight again, or change it in the admin center.");
                     continue;
+                }
 
                 var key = MappingPlan.KeyOf(type.Id, policy.SourceId);
                 var index = transformed.FindIndex(t => t.Source == policy);
@@ -419,14 +423,27 @@ public static partial class PreflightCheck
                 if (changed.Contains("rules") && type.Rules is { } ruleCmdlets && !RulesDiffer(type, ruleCmdlets, transformed[index].Desired, existing.Settings))
                     changed.Remove("rules");
 
+                // A PATCH or a Set cmdlet sends only the source's values. A setting only the destination has a value
+                // for would stay as it is, so it isn't listed as a change.
+                var cantChange = new List<string>();
+                if (type.UpdateWith != UpdateMethod.Put)
+                {
+                    var desired = transformed[index].Desired;
+                    var onlyInDestination = changed
+                        .Where(k => k is not ("rules" or "assignments" or "apps") && desired[k] is null)
+                        .ToList();
+                    cantChange.AddRange(onlyInDestination);
+                    changed = changed.Except(onlyInDestination).ToList();
+                }
+
                 // A Set cmdlet changes only what it takes: DLP locations, for one, are added and removed with
                 // parameters of their own, and Teams group assignments aren't policy settings at all.
-                var cantChange = new List<string>();
                 if (type.UsesPowerShell)
                 {
                     setTakes ??= await tenant.PowerShellFor(type).ParametersOfAsync(type.Cmdlets!.Set!, ct);
-                    cantChange = changed.Where(k => !setTakes.Contains(k) && !(k == "rules" && type.Rules?.Set is not null)).ToList();
-                    changed = changed.Except(cantChange).ToList();
+                    var notTaken = changed.Where(k => !setTakes.Contains(k) && !(k == "rules" && type.Rules?.Set is not null)).ToList();
+                    cantChange.AddRange(notTaken);
+                    changed = changed.Except(notTaken).ToList();
                 }
                 if (changed.Count == 0)
                 {

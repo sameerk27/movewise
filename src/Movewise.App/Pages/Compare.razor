@@ -141,7 +141,7 @@
                                 <b>Restore from this snapshot</b>
                                 <span class="muted small">Recreate what was removed since, and put changed settings back as they were. Every restore is a run you can roll back.</span>
                             </div>
-                            <button class="btn ghost" @onclick="ToggleRestore" aria-expanded="@showRestore">@(showRestore ? "Hide" : "Restore…")</button>
+                            <button class="btn ghost" @onclick="ToggleRestore" aria-expanded="@(showRestore ? "true" : "false")">@(showRestore ? "Hide" : "Restore…")</button>
                         </div>
 
                         @if (showRestore)
@@ -205,7 +205,7 @@
                 <div class="tabs" role="tablist" aria-label="Show">
                     @foreach (var (value, label) in Filters(report))
                     {
-                        <button role="tab" class="tab @(filter == value ? "on" : "")" aria-selected="@(filter == value)" @onclick="@(() => filter = value)">@label</button>
+                        <button role="tab" class="tab @(filter == value ? "on" : "")" aria-selected="@(filter == value ? "true" : "false")" @onclick="@(() => filter = value)">@label</button>
                     }
                 </div>
 
@@ -218,7 +218,7 @@
                         }
                         @foreach (var item in Visible(report))
                         {
-                            <button type="button" class="row selectable @(selected == item ? "selected" : "")" @onclick="@(() => selected = item)">
+                            <button type="button" class="row selectable @(selected == item ? "selected" : "")" aria-pressed="@(selected == item ? "true" : "false")" @onclick="@(() => selected = item)">
                                 <span class="strong">@item.Name</span>
                                 <span class="muted small">@item.Type.DisplayName</span>
                                 <span><span class="pill @PillClass(item.Difference)">@CompareCsv.Describe(report, item.Difference)</span></span>

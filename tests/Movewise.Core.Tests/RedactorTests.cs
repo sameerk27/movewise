@@ -119,4 +119,22 @@ public class RedactorTests
         Assert.DoesNotContain("extra words", text);
         Assert.DoesNotContain("k-123", text);
     }
+
+    [Fact]
+    public void Removes_a_secret_whose_message_was_cut_off_and_keeps_the_next_line()
+    {
+        var text = Redactor.Redact("{\"client_secret\":\"abc123def\nNext line stays");
+
+        Assert.DoesNotContain("abc123def", text);
+        Assert.Contains("Next line stays", text);
+    }
+
+    [Fact]
+    public void Removes_a_domain_written_like_a_dotnet_name()
+    {
+        var text = Redactor.Redact("Remote domain Fabrikam.Net failed in System.Net.Http");
+
+        Assert.DoesNotContain("Fabrikam", text);
+        Assert.Contains("System.Net.Http", text);
+    }
 }

@@ -82,13 +82,13 @@
             </div>
 
             <div class="chips" role="group" aria-label="Filter by service">
-                <button class="chip @(filter is null ? "on" : "")" aria-pressed="@(filter is null)" @onclick="@(() => filter = null)">
+                <button class="chip @(filter is null ? "on" : "")" aria-pressed="@(filter is null ? "true" : "false")" @onclick="@(() => filter = null)">
                     All <span>@State.Exported.Count</span>
                 </button>
                 @foreach (var service in MigrationService.Supported.Where(State.Services.Contains))
                 {
                     var count = State.Exported.Count(e => e.Type.Service == service);
-                    <button class="chip @(filter == service ? "on" : "")" aria-pressed="@(filter == service)" @onclick="@(() => filter = service)">
+                    <button class="chip @(filter == service ? "on" : "")" aria-pressed="@(filter == service ? "true" : "false")" @onclick="@(() => filter = service)">
                         @ServiceName(service) <span>@count</span>
                     </button>
                 }
