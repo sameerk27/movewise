@@ -16,8 +16,10 @@
             @if (State.ReadyToDiscover)
             {
                 <div class="head-actions">
-                    <button class="btn ghost" disabled="@busy" @onclick="ReadAsync">Read again</button>
-                    <button class="btn ghost" disabled="@(busy || State.Selected.Count == 0)" @onclick="SaveAsync">Save export to disk</button>
+                    <button class="btn ghost" disabled="@(busy || saving)" @onclick="ReadAsync">Read again</button>
+                    <button class="btn ghost" disabled="@(busy || saving || State.Selected.Count == 0)" @onclick="SaveAsync">Save export to disk</button>
+                    <button class="btn ghost" disabled="@(busy || saving || State.Selected.Count == 0)" @onclick="SaveAsBaselineAsync">Save as baseline</button>
+                    <button class="btn ghost" disabled="@(busy || saving || State.Selected.Count == 0)" @onclick="SaveAsBuiltAsync">Save as-built report</button>
                 </div>
             }
         </div>
@@ -39,6 +41,19 @@
         }
         else
         {
+            if (saving)
+            {
+                <div class="card pad" role="status">@progress</div>
+            }
+            if (saveError is not null)
+            {
+                <div class="alert bad" role="alert">@saveError</div>
+            }
+            if (baselineSaved is not null)
+            {
+                <div class="alert ok" role="status">@baselineSaved</div>
+            }
+
             if (State.SavedExportFolder is not null)
             {
                 <div class="alert ok">
@@ -70,7 +85,7 @@
                 <button class="chip @(filter is null ? "on" : "")" aria-pressed="@(filter is null)" @onclick="@(() => filter = null)">
                     All <span>@State.Exported.Count</span>
                 </button>
-                @foreach (var service in MigrationService.Supported)
+                @foreach (var service in MigrationService.Supported.Where(State.Services.Contains))
                 {
                     var count = State.Exported.Count(e => e.Type.Service == service);
                     <button class="chip @(filter == service ? "on" : "")" aria-pressed="@(filter == service)" @onclick="@(() => filter = service)">
@@ -86,7 +101,7 @@
                 </div>
                 @if (!Visible.Any())
                 {
-                    <div class="empty muted">No policies of the supported types were found in the source tenant.</div>
+                    <div class="empty muted">@EmptyText</div>
                 }
                 @foreach (var item in Visible)
                 {
@@ -144,6 +159,9 @@
     bool busy;
     string progress = "";
     string? error;
+    string? baselineSaved;
+    bool saving;
+    string? saveError;
 
     M365Service? filter;
 
@@ -152,6 +170,11 @@
 
     int NeedsMappingCount => State.Exported.Count(e => ExportAnalysis.NeedsMapping(e, State.Exported));
     bool AllSelected => Visible.Any() && Visible.All(e => State.Selected.Contains(MigrationState.Key(e)));
+
+    // A service ticked on Connect after the last read has no policies here yet, so the list says that rather than "none found".
+    string EmptyText => filter is { } picked && !State.ReadServices.Contains(picked)
+        ? $"{ServiceName(picked)} hasn't been read yet. Choose Read again to find its policies."
+        : "No policies of the supported types were found in the source tenant.";
 
     static string ServiceName(M365Service service) => service switch
     {
@@ -166,7 +189,8 @@
     protected override async Task OnInitializedAsync()
     {
         State.Changed += OnStateChanged;
-        if (State.ReadyToDiscover && State.Exported.Count == 0)
+        // Read when nothing has been read yet, or when a service was ticked on Connect since the last read.
+        if (State.ReadyToDiscover && (State.Exported.Count == 0 || State.Services.Any(s => !State.ReadServices.Contains(s))))
             await ReadAsync();
     }
 
@@ -193,16 +217,41 @@
         }
     }
 
-    async Task SaveAsync()
+    Task SaveAsync() => SaveWithAsync(() => Migration.SaveExportAsync(), "Couldn't save the export.");
+
+    Task SaveAsBaselineAsync()
     {
-        error = null;
+        baselineSaved = null;
+        return SaveWithAsync(async () =>
+        {
+            var saved = await Migration.SaveBaselineAsync(new Progress<string>(message =>
+            {
+                progress = message;
+                InvokeAsync(StateHasChanged);
+            }));
+            baselineSaved = $"Saved \"{saved.Name}\" with {saved.Items.Count} policies. Use it as a source from Connect, on any tenant.";
+        }, "Couldn't save the baseline.");
+    }
+
+    Task SaveAsBuiltAsync() => SaveWithAsync(() => Migration.SaveAsBuiltAsync(), "Couldn't save the as-built report.");
+
+    // A save keeps the policy list on screen: a failure is shown above it, and the buttons wait until it's done.
+    async Task SaveWithAsync(Func<Task> save, string failure)
+    {
+        saving = true;
+        saveError = null;
+        progress = "Saving…";
         try
         {
-            await Migration.SaveExportAsync();
+            await save();
         }
         catch (Exception ex)
         {
-            error = $"Couldn't save the export. {ex.Message}";
+            saveError = $"{failure} {ex.Message}";
+        }
+        finally
+        {
+            saving = false;
         }
     }
 
@@ -239,14 +288,14 @@
         var lines = new List<string> { "Area,Name,Details" };
         lines.AddRange(State.ManualSetup.Select(item => string.Join(",", Csv(item.Area), Csv(item.Name), Csv(item.Details))));
         lines.AddRange(State.ManualSetupWarnings.Select(warning => string.Join(",", Csv("Read warning"), Csv(""), Csv(warning))));
-        error = null;
+        saveError = null;
         try
         {
             System.IO.File.WriteAllLines(path, lines, System.Text.Encoding.UTF8);
         }
         catch (Exception ex) when (ex is System.IO.IOException or UnauthorizedAccessException)
         {
-            error = $"Couldn't save {System.IO.Path.GetFileName(path)}. If it's open in Excel, close it and try again. ({ex.Message})";
+            saveError = $"Couldn't save {System.IO.Path.GetFileName(path)}. If it's open in Excel, close it and try again. ({ex.Message})";
         }
     }
 

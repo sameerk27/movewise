@@ -156,7 +156,7 @@
                                         }
                                         @foreach (var result in results)
                                         {
-                                            <button type="button" class="result" @onclick="@(() => Choose(result))">
+                                            <button type="button" class="result" @onclick="@(() => ChooseAsync(result))">
                                                 <span class="strong">@result.DisplayName</span>
                                                 @if (result.Detail is not null)
                                                 {
@@ -175,11 +175,11 @@
                                         @(selected.TargetType == ResourceRegistry.Group ? "Create this group in the destination" : "Create it with the policies")
                                     </button>
                                 }
-                                <button class="btn ghost" disabled="@(selected.Kind == MatchKind.RemoveFromPolicies)" @onclick="Remove">Remove from the policies</button>
+                                <button class="btn ghost" disabled="@(selected.Kind == MatchKind.RemoveFromPolicies)" @onclick="RemoveAsync">Remove from the policies</button>
                                 <span class="small muted">Removing an excluded group, user or address widens who a policy applies to. Pre-flight will flag it.</span>
                                 @if (selected.IsDecision)
                                 {
-                                    <button class="btn link" @onclick="Clear">Undo my choice</button>
+                                    <button class="btn link" @onclick="ClearAsync">Undo my choice</button>
                                 }
                             </div>
                         }
@@ -333,11 +333,10 @@
         }
     }
 
-    void Choose(ObjectRef destination)
+    Task ChooseAsync(ObjectRef destination)
     {
-        selected?.MapTo(destination);
         results = null;
-        State.NotifyChanged();
+        return ChangeDecisionAsync(m => m.MapTo(destination));
     }
 
     async Task CreateAsync()
@@ -350,16 +349,20 @@
             await BuildAsync();
     }
 
-    void Remove()
-    {
-        selected?.RemoveFromPolicies();
-        State.NotifyChanged();
-    }
+    Task RemoveAsync() => ChangeDecisionAsync(m => m.RemoveFromPolicies());
 
-    void Clear()
+    Task ClearAsync() => ChangeDecisionAsync(m => m.Clear());
+
+    async Task ChangeDecisionAsync(Action<Mapping> decide)
     {
-        selected?.Clear();
+        if (selected is null)
+            return;
+        Migration.UndoCreate(selected);
+        decide(selected);
         State.NotifyChanged();
+        // Taking a created object back out of the migration changes what the policies point at.
+        if (!State.MappingIsCurrent)
+            await BuildAsync();
     }
 
     void ExportCsv()

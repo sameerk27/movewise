@@ -1,0 +1,227 @@
+@page "/drift"
+@using Movewise.Core.Compare
+@inject MigrationState State
+@inject MigrationService Migration
+@inject NavigationManager Navigation
+@implements IDisposable
+
+<div class="page">
+    <header class="page-head">
+        <div class="head-row">
+            <div class="head-text">
+                <h1>Drift monitor</h1>
+                <p class="muted">Settings that no longer match the latest snapshot of their tenant, and what changed. Checking only reads: nothing changes in either tenant.</p>
+            </div>
+            <div class="head-actions">
+                <button class="btn primary" disabled="@(busy || watched.Count == 0 || Migration.IsWorking)" @onclick="CheckNowAsync">Check now</button>
+            </div>
+        </div>
+    </header>
+
+    <div class="content">
+        @if (busy)
+        {
+            <div class="card pad" role="status">@progress</div>
+        }
+        @if (error is not null)
+        {
+            <div class="alert bad" role="alert">@error</div>
+        }
+
+        @if (watched.Count == 0)
+        {
+            <div class="card pad stack gap">
+                <b>Nothing to watch yet</b>
+                <span class="muted">Take a snapshot of a tenant on the Snapshots screen. Drift monitor then checks that tenant against its latest snapshot.</span>
+            </div>
+        }
+        else
+        {
+            <div class="stats four">
+                <div class="card stat"><b class="@(OpenDrifts > 0 ? "bad-text" : "")">@OpenCount</b><span class="muted">@OpenLabel</span></div>
+                <div class="card stat"><b>@watched.Count</b><span class="muted">@(watched.Count == 1 ? "tenant" : "tenants") watched</span></div>
+                <div class="card stat"><b>@(lastCheck is { } at ? at.LocalDateTime.ToString("HH:mm") : "Not yet")</b><span class="muted">last check</span></div>
+                <div class="card stat"><b>@(Unchecked.Count == 0 ? "All" : Unchecked.Count.ToString())</b><span class="muted">@(Unchecked.Count == 0 ? "signed in" : "not signed in, so not checked")</span></div>
+            </div>
+
+            @if (Unchecked.Count > 0)
+            {
+                <div class="alert warn">Sign in to @string.Join(", ", Unchecked) to check @(Unchecked.Count == 1 ? "it" : "them").</div>
+            }
+
+            <div class="preflight">
+                <section class="card table drift-table" aria-label="Differences">
+                    <div class="row head"><span>Result</span><span>What changed</span><span>Type</span><span>Tenant</span></div>
+                    @if (drifts.Count == 0)
+                    {
+                        <div class="row"><span class="muted" style="grid-column: 1 / -1">@EmptyMessage</span></div>
+                    }
+                    @foreach (var drift in drifts)
+                    {
+                        <button type="button" class="row selectable @(selected == drift ? "selected" : "")" @onclick="@(() => selected = drift)">
+                            <span><span class="pill @PillClass(drift.Item.Difference)">@CompareCsv.Describe(drift.Report, drift.Item.Difference)</span></span>
+                            <span class="strong">@drift.Item.Name</span>
+                            <span class="muted small">@drift.Item.Type.DisplayName</span>
+                            <span class="small">@drift.Tenant</span>
+                        </button>
+                    }
+                </section>
+
+                <section class="card pad stack gap" aria-label="Drift detail">
+                    @if (selected is { } shown)
+                    {
+                        <div class="stack">
+                            <span class="label">Drift detail</span>
+                            <b>@shown.Item.Name</b>
+                            <span class="muted small">@shown.Item.Type.DisplayName · @shown.Tenant</span>
+                        </div>
+                        <span class="small">@CompareCsv.Describe(shown.Report, shown.Item.Difference)</span>
+                        @if (shown.Item.ChangedSettings.Count > 0)
+                        {
+                            <div class="stack">
+                                <span class="muted small">Settings that differ</span>
+                                <ul class="small">
+                                    @foreach (var setting in shown.Item.ChangedSettings)
+                                    {
+                                        <li>@setting</li>
+                                    }
+                                </ul>
+                            </div>
+                        }
+                        @foreach (var note in shown.Item.Notes)
+                        {
+                            <span class="small warn-text">@note</span>
+                        }
+                        <div class="head-actions">
+                            <button class="btn primary" disabled="@(busy || Migration.IsWorking)" @onclick="OpenInCompare">Open full comparison</button>
+                        </div>
+                        <span class="muted small">Restoring a setting is done from the full comparison, the same as for any snapshot.</span>
+                    }
+                    else
+                    {
+                        <span class="muted">Select a difference to see what changed.</span>
+                    }
+                </section>
+            </div>
+        }
+    </div>
+</div>
+
+@code {
+    sealed record DriftRow(string Tenant, ComparisonReport Report, ComparedItem Item);
+
+    // The latest snapshot of each tenant, and the connected tenants among them.
+    IReadOnlyList<Snapshot> watched = [];
+    readonly Dictionary<string, ComparisonReport> reports = new(StringComparer.OrdinalIgnoreCase);
+    DateTimeOffset? lastCheck;
+    DriftRow? selected;
+    bool busy;
+    string progress = "";
+    string? error;
+
+    // A saved baseline isn't a tenant that can be checked: its policies come from the file, not from the tenant.
+    IEnumerable<TenantConnection> Connected =>
+        new[] { State.Source, State.Destination }.OfType<TenantConnection>().Where(t => !t.IsBaseline);
+
+    bool IsConnected(Snapshot snapshot) =>
+        Connected.Any(t => string.Equals(t.Info.TenantId, snapshot.TenantId, StringComparison.OrdinalIgnoreCase));
+
+    IReadOnlyList<string> Unchecked => watched.Where(s => !IsConnected(s)).Select(s => s.TenantName).ToList();
+
+    List<DriftRow> drifts => reports
+        .SelectMany(r => r.Value.Items.Where(i => i.Difference != Difference.Same)
+            .Select(i => new DriftRow(TenantName(r.Key), r.Value, i)))
+        .OrderBy(d => d.Tenant).ThenBy(d => d.Item.Name, StringComparer.OrdinalIgnoreCase)
+        .ToList();
+
+    string TenantName(string tenantId) =>
+        watched.FirstOrDefault(s => string.Equals(s.TenantId, tenantId, StringComparison.OrdinalIgnoreCase))?.TenantName ?? tenantId;
+
+    int OpenDrifts => reports.Values.Sum(r => r.Items.Count(i => i.Difference != Difference.Same));
+
+    // Before any check there's no count: a zero would read as "no drift".
+    string OpenCount => lastCheck is null ? "—" : OpenDrifts.ToString();
+    string OpenLabel => lastCheck is null ? "not checked yet" : (OpenDrifts == 1 ? "difference" : "differences") + " since the last snapshot";
+
+    // After a check that didn't finish, the table can't say that nothing has changed.
+    string EmptyMessage =>
+        error is not null ? "The check didn't finish for every tenant, so there's nothing current to show."
+        : lastCheck is null ? "Check now to compare each tenant with its latest snapshot."
+        : "Nothing has changed since the latest snapshot.";
+
+    protected override async Task OnInitializedAsync()
+    {
+        State.Changed += OnStateChanged;
+        try
+        {
+            var all = await Migration.ListSnapshotsAsync();
+            watched = all.GroupBy(s => s.TenantId, StringComparer.OrdinalIgnoreCase)
+                .Select(g => g.OrderByDescending(s => s.Taken).First())
+                .OrderBy(s => s.TenantName)
+                .ToList();
+        }
+        catch (Exception ex) when (ex is not OperationCanceledException)
+        {
+            error = $"Couldn't read the saved snapshots: {ex.Message}";
+        }
+    }
+
+    async Task CheckNowAsync()
+    {
+        busy = true;
+        error = null;
+        selected = null;
+        var failures = new List<string>();
+        var checkedAny = false;
+        try
+        {
+            foreach (var snapshot in watched.Where(IsConnected))
+            {
+                var reporter = new Progress<string>(text => { progress = $"{snapshot.TenantName}: {text}"; InvokeAsync(StateHasChanged); });
+                try
+                {
+                    await Migration.CompareWithSnapshotAsync(snapshot, reporter);
+                    if (State.Comparison is { } report)
+                    {
+                        reports[snapshot.TenantId] = report;
+                        checkedAny = true;
+                    }
+                }
+                catch (Exception ex) when (ex is not OperationCanceledException)
+                {
+                    // What was found last time no longer describes this tenant, so it's not kept on screen as current.
+                    reports.Remove(snapshot.TenantId);
+                    failures.Add($"{snapshot.TenantName}: {ex.Message}");
+                }
+            }
+            if (checkedAny)
+                lastCheck = DateTimeOffset.Now;
+        }
+        finally
+        {
+            busy = false;
+        }
+        if (failures.Count > 0)
+            error = string.Join(" ", failures);
+    }
+
+    void OpenInCompare()
+    {
+        if (selected is not { } shown)
+            return;
+        // Compare shows whatever report is current, so hand it this tenant's check.
+        State.SetComparison(shown.Report);
+        Navigation.NavigateTo("compare");
+    }
+
+    static string PillClass(Difference difference) => difference switch
+    {
+        Difference.OnlyInFirst => "bad",
+        Difference.Different => "warn",
+        _ => "info",
+    };
+
+    void OnStateChanged() => InvokeAsync(StateHasChanged);
+
+    public void Dispose() => State.Changed -= OnStateChanged;
+}

@@ -1,0 +1,206 @@
+@page "/snapshots"
+@using Movewise.Core.Compare
+@using Movewise.Core.Preflight
+@inject MigrationState State
+@inject MigrationService Migration
+@inject NavigationManager Navigation
+@implements IDisposable
+
+<div class="page">
+    <header class="page-head">
+        <div class="head-row">
+            <div class="head-text">
+                <h1>Snapshots</h1>
+                <p class="muted">Point-in-time copies of each tenant's configuration. Compare one with its tenant as it is now, or restore settings from it.</p>
+            </div>
+            <div class="head-actions">
+                @foreach (var (role, tenant) in Tenants)
+                {
+                    <button class="btn ghost" disabled="@(busy || Migration.IsWorking)" @onclick="@(() => SaveSnapshotAsync(role))">
+                        Take snapshot of @tenant.Info.DisplayName
+                    </button>
+                }
+            </div>
+        </div>
+    </header>
+
+    <div class="content">
+        @if (message is not null)
+        {
+            <div class="alert ok" role="status">@message</div>
+        }
+        @if (busy)
+        {
+            <div class="card pad" role="status">@progress</div>
+        }
+        @if (error is not null)
+        {
+            <div class="alert bad" role="alert">@error</div>
+        }
+
+        @if (snapshots.Count == 0)
+        {
+            <div class="card pad stack gap">
+                <b>No snapshots yet</b>
+                <span class="muted">@(Tenants.Any() ? "Take one of a tenant above. It's kept until you delete it, and you can compare it with the tenant at any time." : "Sign in to a tenant first, then take a snapshot of it.")</span>
+            </div>
+        }
+        else
+        {
+            <div class="preflight">
+                <section class="card table snapshot-table" aria-label="Snapshots">
+                    <div class="snapshot-filter" role="group" aria-label="Tenant">
+                        <button class="chip @(tenantFilter is null ? "on" : "")" aria-pressed="@(tenantFilter is null)" @onclick="@(() => tenantFilter = null)">All tenants</button>
+                        @foreach (var name in TenantNames)
+                        {
+                            var filter = name;
+                            <button class="chip @(tenantFilter == filter ? "on" : "")" aria-pressed="@(tenantFilter == filter)" @onclick="@(() => tenantFilter = filter)">@filter</button>
+                        }
+                    </div>
+                    <div class="row head"><span>Tenant</span><span>Taken</span><span>Policies</span><span>Tenant state</span></div>
+                    @foreach (var snapshot in Visible)
+                    {
+                        <button type="button" class="row selectable @(selected is not null && selected.Path == snapshot.Path ? "selected" : "")" @onclick="@(() => Select(snapshot))">
+                            <span class="strong">@snapshot.TenantName</span>
+                            <span class="muted small">@snapshot.Taken.LocalDateTime.ToString("d MMM yyyy, HH:mm")</span>
+                            <span class="small">@snapshot.Items.Count</span>
+                            <span><span class="pill @(IsConnected(snapshot) ? "ok" : "neutral")">@(IsConnected(snapshot) ? "Signed in now" : "Not signed in")</span></span>
+                        </button>
+                    }
+                </section>
+
+                <section class="card pad stack gap" aria-label="Selected snapshot">
+                    @if (selected is { } shown)
+                    {
+                        <div class="stack">
+                            <span class="label">Selected snapshot</span>
+                            <b>@shown.TenantName</b>
+                            <span class="muted small">Taken @shown.Taken.LocalDateTime.ToString("d MMM yyyy, HH:mm") · @shown.Items.Count policies and settings</span>
+                        </div>
+                        <span class="muted small">
+                            Compare it with the tenant as it is now to see what was added, removed or changed. Restoring settings is done from the comparison.
+                        </span>
+                        @if (!IsConnected(shown))
+                        {
+                            <div class="alert warn">Sign in to @shown.TenantName to compare with it.</div>
+                        }
+                        <div class="head-actions">
+                            <button class="btn primary" disabled="@(busy || !IsConnected(shown) || Migration.IsWorking)" @onclick="CompareSelectedAsync">
+                                Compare with now
+                            </button>
+                        </div>
+                    }
+                    else
+                    {
+                        <span class="muted">Select a snapshot to compare it with its tenant.</span>
+                    }
+                </section>
+            </div>
+        }
+    </div>
+</div>
+
+@code {
+    IReadOnlyList<Snapshot> snapshots = [];
+    Snapshot? selected;
+    string? tenantFilter;
+    bool busy;
+    string progress = "";
+    string? error;
+    string? message;
+    bool disposed;
+
+    // A saved baseline is only ever a source for migrations: it's not a tenant, so it has no snapshots of its own.
+    IEnumerable<(TenantRole Role, TenantConnection Tenant)> Tenants =>
+        new[] { (TenantRole.Source, State.Source), (TenantRole.Destination, State.Destination) }
+            .Where(t => t.Item2 is { IsBaseline: false })
+            .Select(t => (t.Item1, t.Item2!));
+
+    IEnumerable<string> TenantNames => snapshots.Select(s => s.TenantName).Distinct().OrderBy(n => n);
+
+    IEnumerable<Snapshot> Visible => snapshots.Where(s => tenantFilter is null || s.TenantName == tenantFilter);
+
+    bool IsConnected(Snapshot snapshot) =>
+        Tenants.Any(t => string.Equals(t.Tenant.Info.TenantId, snapshot.TenantId, StringComparison.OrdinalIgnoreCase));
+
+    protected override async Task OnInitializedAsync()
+    {
+        State.Changed += OnStateChanged;
+        await LoadAsync();
+    }
+
+    async Task LoadAsync()
+    {
+        try
+        {
+            snapshots = (await Migration.ListSnapshotsAsync()).OrderByDescending(s => s.Taken).ToList();
+            if (selected is not null)
+                selected = snapshots.FirstOrDefault(s => s.Path == selected.Path);
+        }
+        catch (Exception ex) when (ex is not OperationCanceledException)
+        {
+            error = $"Couldn't read the saved snapshots: {ex.Message}";
+        }
+    }
+
+    void Select(Snapshot snapshot)
+    {
+        selected = snapshot;
+        error = null;
+        message = null;
+    }
+
+    async Task SaveSnapshotAsync(TenantRole role)
+    {
+        Snapshot? saved = null;
+        await RunAsync(async p => saved = await Migration.SaveSnapshotAsync(role, MigrationService.Supported, p));
+        if (saved is null)
+            return;
+        await LoadAsync();
+        selected = snapshots.FirstOrDefault(s => s.Path == saved.Path);
+        message = $"Saved a snapshot of {saved.TenantName}: {saved.Items.Count} policies and settings.";
+    }
+
+    async Task CompareSelectedAsync()
+    {
+        if (selected is not { } snapshot)
+            return;
+        var compared = false;
+        await RunAsync(async p =>
+        {
+            await Migration.CompareWithSnapshotAsync(snapshot, p);
+            compared = true;
+        });
+        // Only if this page is still the one on screen: a user who has moved on to another screen stays there.
+        if (compared && !disposed)
+            Navigation.NavigateTo("compare");
+    }
+
+    async Task RunAsync(Func<IProgress<string>, Task> work)
+    {
+        busy = true;
+        error = null;
+        message = null;
+        var reporter = new Progress<string>(text => { progress = text; InvokeAsync(StateHasChanged); });
+        try
+        {
+            await work(reporter);
+        }
+        catch (Exception ex) when (ex is not OperationCanceledException)
+        {
+            error = ex.Message;
+        }
+        finally
+        {
+            busy = false;
+        }
+    }
+
+    void OnStateChanged() => InvokeAsync(StateHasChanged);
+
+    public void Dispose()
+    {
+        disposed = true;
+        State.Changed -= OnStateChanged;
+    }
+}

@@ -1,0 +1,136 @@
+@page "/baselines"
+@using Movewise.Core.Baselines
+@inject MigrationState State
+@inject MigrationService Migration
+@inject NavigationManager Navigation
+@implements IDisposable
+
+<div class="page">
+    <header class="page-head">
+        <div class="head-row">
+            <div class="head-text">
+                <h1>Baselines</h1>
+                <p class="muted">Save the policies of one tenant as a baseline, then apply them to other tenants. A baseline stays as it was saved, even if its tenant changes afterwards.</p>
+            </div>
+            <div class="head-actions">
+                <button class="btn primary" disabled="@(!State.ReadyToDiscover || Migration.IsWorking)" @onclick="@(() => Navigation.NavigateTo("discover"))"
+                        title="@(State.ReadyToDiscover ? "Save what's selected on the Discover step" : "Connect both tenants first")">
+                    Save from a migration
+                </button>
+            </div>
+        </div>
+    </header>
+
+    <div class="content">
+        @if (baselines.Count == 0)
+        {
+            <div class="card pad stack gap">
+                <b>No baselines yet</b>
+                <span class="muted">Save one from a migration: on Discover, once you've chosen the policies to keep. Then apply it to another tenant from Connect.</span>
+            </div>
+        }
+        else
+        {
+            <div class="preflight">
+                <section class="stack gap" aria-label="Saved baselines">
+                    @foreach (var baseline in baselines)
+                    {
+                        var isShown = selected?.Path == baseline.Path;
+                        <button type="button" class="card pad stack @(isShown ? "baseline-on" : "")" aria-pressed="@isShown" @onclick="@(() => selected = baseline)">
+                            <span class="head-row">
+                                <b>@baseline.Name</b>
+                                <span class="pill info">Saved</span>
+                            </span>
+                            <span class="muted small">@baseline.Items.Count policies · from @baseline.TenantName</span>
+                            <span class="muted small">Saved @baseline.Saved.LocalDateTime.ToString("d MMM yyyy, HH:mm")</span>
+                        </button>
+                    }
+                </section>
+
+                <div class="stack gap">
+                    @if (selected is { } detail)
+                    {
+                        <div class="card pad stack gap">
+                            <div class="head-row">
+                                <div class="stack">
+                                    <h2>@detail.Name</h2>
+                                    <span class="muted small">Saved from @detail.TenantName · @detail.Items.Count policies and settings</span>
+                                </div>
+                                <button class="btn primary" disabled="@(UseReason is not null)" title="@UseReason" @onclick="@(() => Navigation.NavigateTo(""))">Use in Connect</button>
+                            </div>
+                            <span class="muted small">Connect uses a baseline as the source once the destination is signed in. Nothing changes in either tenant until you deploy.</span>
+                        </div>
+                    }
+
+                    @if (selected is { } shown)
+                    {
+                        <section class="card table baseline-table" aria-label="Policies in the baseline">
+                            <div class="row head"><span>Policy</span><span>Service</span><span>Type</span></div>
+                            @foreach (var item in shown.Items)
+                            {
+                                <div class="row">
+                                    <span class="strong">@item.DisplayName</span>
+                                    <span class="small">@ServiceName(item.Type.Service)</span>
+                                    <span class="muted small">@item.Type.DisplayName</span>
+                                </div>
+                            }
+                        </section>
+                    }
+                    else
+                    {
+                        <div class="card pad"><span class="muted">Select a baseline to see the policies it holds.</span></div>
+                    }
+                </div>
+            </div>
+        }
+
+        @if (error is not null)
+        {
+            <div class="alert bad" role="alert">@error</div>
+        }
+    </div>
+</div>
+
+@code {
+    IReadOnlyList<Baseline> baselines = [];
+    Baseline? selected;
+    string? error;
+
+    // Why "Use in Connect" can't use this baseline, or null when it can. Connect offers a baseline only as the source
+    // of a real tenant: the destination is signed in, and no source is connected.
+    string? UseReason =>
+        Migration.IsWorking ? "Wait for the deployment to finish first."
+        : Migration.IsDemo ? "Leave the demo first: a baseline is used with a real tenant."
+        : State.Destination is null ? "Sign in to the destination tenant first."
+        : State.Source is not null ? "Sign out of the source tenant first: the baseline takes its place."
+        : null;
+
+    protected override async Task OnInitializedAsync()
+    {
+        State.Changed += OnStateChanged;
+        try
+        {
+            // The list is already the current mode's: demo baselines are read only while the demo is connected.
+            baselines = (await Migration.ListBaselinesAsync()).ToList();
+            selected = baselines.FirstOrDefault();
+        }
+        catch (Exception ex) when (ex is not OperationCanceledException)
+        {
+            error = $"Couldn't read the saved baselines: {ex.Message}";
+        }
+    }
+
+    static string ServiceName(M365Service service) => service switch
+    {
+        M365Service.Entra => "Entra ID",
+        M365Service.Defender => "Defender for Office 365",
+        M365Service.DefenderEndpoint => "Defender for Endpoint",
+        M365Service.Exchange => "Exchange Online",
+        M365Service.SharePoint => "SharePoint and OneDrive",
+        _ => service.ToString(),
+    };
+
+    void OnStateChanged() => InvokeAsync(StateHasChanged);
+
+    public void Dispose() => State.Changed -= OnStateChanged;
+}

@@ -228,6 +228,10 @@
             }
             else
             {
+                @if (Run.RolledBack is null && Run.RemainingCount == 0)
+                {
+                    <a class="btn primary" href="compare">Compare tenants</a>
+                }
                 <button class="btn ghost" @onclick="Close">@(Run.RolledBack is null && Run.RemainingCount > 0 ? "Close run" : "New deployment")</button>
                 @if (Run.CanRollBack && !confirmRollback)
                 {
@@ -333,6 +337,8 @@
         finally
         {
             stopping = false;
+            // A comparison from before the run no longer matches the destination, so Compare starts from nothing.
+            State.SetComparison(null);
         }
     }
 
@@ -393,6 +399,7 @@
         finally
         {
             stopping = false;
+            State.SetComparison(null);
         }
     }
 
@@ -474,7 +481,13 @@
         _ => "neutral",
     };
 
-    void OnStateChanged() => InvokeAsync(StateHasChanged);
+    void OnStateChanged() => InvokeAsync(() =>
+    {
+        // A run started from an earlier visit to this screen ends without passing through this page's finally.
+        if (!Migration.IsBusy)
+            stopping = false;
+        StateHasChanged();
+    });
 
     public void Dispose() => State.Changed -= OnStateChanged;
 }

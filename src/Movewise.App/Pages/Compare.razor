@@ -49,7 +49,7 @@
                     @foreach (var service in MigrationService.Supported)
                     {
                         <label>
-                            <input type="checkbox" checked="@services.Contains(service)" @onchange="@(e => Toggle(service, e.Value is true))" />
+                            <input type="checkbox" checked="@services.Contains(service)" disabled="@Migration.IsWorking" @onchange="@(e => Toggle(service, e.Value is true))" />
                             @ServiceName(service)
                         </label>
                     }
@@ -81,7 +81,7 @@
                                     <option value="@snapshot.Path">@snapshot.TenantName · @snapshot.Taken.LocalDateTime.ToString("d MMM yyyy HH:mm") · @snapshot.Items.Count items</option>
                                 }
                             </select>
-                            <button class="btn primary" disabled="@(busy || SelectedSnapshot is null || services.Count == 0 || Migration.IsWorking)" @onclick="CompareSnapshotAsync">
+                            <button class="btn primary" disabled="@(busy || SelectedSnapshot is null || Migration.IsWorking)" @onclick="CompareSnapshotAsync">
                                 Compare with snapshot
                             </button>
                         </div>
@@ -157,7 +157,7 @@
                                     {
                                         <li>
                                             <label>
-                                                <input type="checkbox" checked="@restoreChoice.Contains(item)" @onchange="@(e => ToggleRestoreItem(item, e.Value is true))" />
+                                                <input type="checkbox" checked="@restoreChoice.Contains(item)" disabled="@busy" @onchange="@(e => ToggleRestoreItem(item, e.Value is true))" />
                                                 <span><b>@item.Name</b> <span class="muted small">@item.Type.DisplayName · @(item.Difference == Difference.OnlyInFirst ? "recreate" : $"set back: {string.Join(", ", item.ChangedSettings)}")</span></span>
                                             </label>
                                         </li>
@@ -167,8 +167,8 @@
                                 {
                                     <span class="muted small">@left</span>
                                 }
-                                <label class="small"><input type="checkbox" @bind="keepOriginalState" /> Recreate policies as they were, switched on. Otherwise they come back in report-only or test mode, to check first.</label>
-                                <label class="small"><input type="checkbox" @bind="leaveOutBlocked" /> Leave out anything pre-flight blocks, and restore the rest.</label>
+                                <label class="small"><input type="checkbox" @bind="keepOriginalState" @bind:after="ClearRestoreCheck" disabled="@busy" /> Recreate policies as they were, switched on. Otherwise they come back in report-only or test mode, to check first.</label>
+                                <label class="small"><input type="checkbox" @bind="leaveOutBlocked" @bind:after="ClearRestoreCheck" disabled="@busy" /> Leave out anything pre-flight blocks, and restore the rest.</label>
                                 <div class="head-actions">
                                     <button class="btn ghost" disabled="@(busy || restoreChoice.Count == 0 || Migration.IsWorking)" @onclick="CheckRestoreAsync">Check the restore</button>
                                     <button class="btn primary" disabled="@(busy || State.Restore is not { Report.CanDeploy: true } || Migration.IsWorking)" @onclick="PrepareRestoreAsync">Continue to restore</button>
@@ -218,7 +218,7 @@
                         }
                         @foreach (var item in Visible(report))
                         {
-                            <button type="button" class="row selectable @(selected == item ? "on" : "")" @onclick="@(() => selected = item)">
+                            <button type="button" class="row selectable @(selected == item ? "selected" : "")" @onclick="@(() => selected = item)">
                                 <span class="strong">@item.Name</span>
                                 <span class="muted small">@item.Type.DisplayName</span>
                                 <span><span class="pill @PillClass(item.Difference)">@CompareCsv.Describe(report, item.Difference)</span></span>
@@ -280,7 +280,8 @@
 
     Mode mode = Mode.Tenants;
     Filter filter = Filter.Differences;
-    readonly HashSet<M365Service> services = [.. MigrationService.Supported];
+    // The services chosen on Connect, shared with Discover and deployment: Compare reads what they read.
+    HashSet<M365Service> services => State.Services;
     IReadOnlyList<Snapshot> snapshots = [];
     string? snapshotPath;
     ComparedItem? selected;
@@ -311,9 +312,11 @@
     {
         if (on) restoreChoice.Add(item);
         else restoreChoice.Remove(item);
-        // What was checked no longer matches the choice.
-        State.SetRestore(null);
+        ClearRestoreCheck();
     }
+
+    // What was checked no longer matches the choice or its options, so it has to be checked again.
+    void ClearRestoreCheck() => State.SetRestore(null);
 
     static string NotRestorable(ComparisonReport report)
     {
@@ -357,9 +360,15 @@
     protected override async Task OnInitializedAsync()
     {
         State.Changed += OnStateChanged;
-        if (State.Source is null || State.Destination is null)
+        // A restore checked on an earlier visit was for a choice and options this page no longer shows.
+        State.SetRestore(null);
+        // A snapshot comparison opened from Snapshots or Drift is shown as one, whichever tenants are signed in.
+        if (State.Comparison?.Snapshot is not null || State.Source is null || State.Destination is null)
             mode = Mode.Snapshot;
         await LoadSnapshotsAsync();
+        // Its snapshot is the one picked in the list.
+        if (State.Comparison?.Snapshot?.Path is { } shown && snapshots.Any(s => s.Path == shown))
+            snapshotPath = shown;
     }
 
     async Task LoadSnapshotsAsync()
@@ -379,7 +388,7 @@
     void Toggle(M365Service service, bool on)
     {
         if (on) services.Add(service);
-        else services.Remove(service);
+        else State.RemoveService(service);
     }
 
     Task CompareTenantsAsync() => RunAsync(p => Migration.CompareTenantsAsync(services, p));

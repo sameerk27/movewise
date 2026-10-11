@@ -35,6 +35,13 @@ public partial class MainWindow : Window
 
         InitializeComponent();
 
+        // On a small screen the designed size doesn't fit, and centering it would push its edges off-screen.
+        var area = SystemParameters.WorkArea;
+        Width = Math.Min(Width, area.Width);
+        Height = Math.Min(Height, area.Height);
+        MinWidth = Math.Min(MinWidth, area.Width);
+        MinHeight = Math.Min(MinHeight, area.Height);
+
         // Quietly, once the window is up.
         Loaded += async (_, _) => await provider.GetRequiredService<UpdateService>().CheckAsync();
     }

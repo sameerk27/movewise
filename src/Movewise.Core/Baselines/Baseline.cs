@@ -92,7 +92,9 @@ public static class BaselineStore
     {
         var recording = new RecordingGraph(template.Graph);
         progress?.Report("Saving what the policies point at…");
-        await Matcher.BuildAsync(recording, template, selected, exported, null, null, ct);
+        // Both sides of matching are the template, and both go through the recording: the same request path means the
+        // same answer, so what's recorded serves later when the template is the source and another tenant the destination.
+        await Matcher.BuildAsync(recording, template with { Graph = recording }, selected, exported, null, null, ct);
         return new Baseline(name, info.TenantId, info.DisplayName, info.InitialDomain, info.DefaultDomain, DateTimeOffset.Now, isDemo,
             selected.ToList(), new Dictionary<string, JsonObject>(recording.Responses));
     }

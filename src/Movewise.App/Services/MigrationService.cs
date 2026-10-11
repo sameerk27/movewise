@@ -1,6 +1,7 @@
 using Microsoft.Identity.Client;
 using Movewise.App.State;
 using Movewise.Core.Access;
+using Movewise.Core.Baselines;
 using Movewise.Core.Compare;
 using Movewise.Core.Deploy;
 using Movewise.Core.Export;
@@ -11,6 +12,7 @@ using Movewise.M365;
 using Movewise.M365.Auth;
 using Movewise.M365.Graph;
 using Movewise.M365.PowerShell;
+using Movewise.Core.Tenants;
 
 namespace Movewise.App.Services;
 
@@ -125,6 +127,14 @@ public sealed class MigrationService(AuthService auth, MigrationState state, Mov
             DiagnosticLog.Error($"No Exchange Online access yet on the {role.ToString().ToLowerInvariant()} tenant.", ex);
         }
         await TryGetTokenAsync(account, Scopes.Teams, ct);
+
+        // Those token requests can take a while too: check again, so the demo or a deployment that started meanwhile
+        // is never paired with this tenant.
+        if (IsWorking || IsDemo)
+        {
+            await auth.SignOutAsync(account);
+            throw new InvalidOperationException(IsDemo ? "Leave the demo first, then sign in to your tenants." : "Wait for the deployment to finish, then sign in again.");
+        }
 
         // The source only ever gets read-only clients: its Graph has no write methods, and its PowerShell refuses
         // anything but Get cmdlets. The app registration's permissions alone don't stop writes (see Scopes).
@@ -262,12 +272,24 @@ public sealed class MigrationService(AuthService auth, MigrationState state, Mov
     public Task DiscoverAsync(IProgress<string> progress, CancellationToken ct = default) => Logged("Discovery", async () =>
     {
         var source = state.Source ?? throw new InvalidOperationException("Sign in to the source tenant first.");
-        var types = Supported.SelectMany(ResourceRegistry.For);
+        // The services ticked when the read starts are the ones it reads, even if they're changed while it runs.
+        var chosen = state.Services.ToHashSet();
+        if (source.Baseline is { } saved)
+        {
+            // A baseline is already read: its policies come from the file, for the services chosen.
+            state.SetExported(new ExportResult(saved.Items, []), chosen);
+            state.SetManualSetup(new ManualSetupResult([], []));
+            return;
+        }
+        var types = Supported.Where(chosen.Contains).SelectMany(ResourceRegistry.For);
         var result = await Exporter.ExportAsync(source.Clients, types, progress, ct);
         EnsureSameTenants(source, null);
-        state.SetExported(result);
+        state.SetExported(result, chosen);
         progress.Report("Reading mail flow connectors and DKIM domains…");
-        var manual = await Exporter.ReadManualSetupAsync(source.Clients, ct);
+        // Connectors and DKIM come from Exchange Online, so they're read only when Exchange is chosen.
+        var manual = chosen.Contains(M365Service.Exchange)
+            ? await Exporter.ReadManualSetupAsync(source.Clients, ct)
+            : new ManualSetupResult([], []);
         EnsureSameTenants(source, null);
         state.SetManualSetup(manual);
         DiagnosticLog.Info($"Discovered {result.Items.Count} policies." + string.Concat(result.Warnings.Select(w => $" Couldn't read {w.Type.Id}: {w.Message}")));
@@ -291,7 +313,7 @@ public sealed class MigrationService(AuthService auth, MigrationState state, Mov
             var source = state.Source ?? throw new InvalidOperationException("Sign in to the source tenant first.");
             var destination = state.Destination ?? throw new InvalidOperationException("Sign in to the destination tenant first.");
             var report = await TenantComparer.CompareTenantsAsync(source.Clients, source.Info.DisplayName, destination.Clients, destination.Info.DisplayName,
-                TypesOf(services), progress, ct);
+                TypesOf(services), progress, ct, source.Baseline?.Items);
             EnsureSameTenants(source, destination);
             state.SetComparison(report);
             DiagnosticLog.Info($"Compared tenants: {report.Count(Difference.OnlyInFirst)} only in the source, {report.Count(Difference.OnlyInSecond)} only in the destination, " +
@@ -306,6 +328,9 @@ public sealed class MigrationService(AuthService auth, MigrationState state, Mov
         {
             RefuseWhileWorking();
             var tenant = state.Get(role) ?? throw new InvalidOperationException($"Sign in to the {role.ToString().ToLowerInvariant()} tenant first.");
+            // A saved baseline holds policies from a file, not what the tenant has now: a snapshot of it would be wrong.
+            if (tenant.IsBaseline)
+                throw new InvalidOperationException("A saved baseline isn't a tenant, so there's nothing to snapshot in it. Sign in to the tenant to take a snapshot.");
             progress.Report($"Reading {tenant.Info.DisplayName}…");
             var types = TypesOf(services).ToList();
             var result = await Exporter.ExportAsync(tenant.Clients, types, progress, ct);
@@ -317,26 +342,88 @@ public sealed class MigrationService(AuthService auth, MigrationState state, Mov
         return saved!;
     }
 
-    /// <summary>Snapshots of the tenants signed in now, newest first.</summary>
-    public async Task<IReadOnlyList<Snapshot>> ListSnapshotsAsync(CancellationToken ct = default)
-    {
-        var tenants = new[] { state.Source?.Info.TenantId, state.Destination?.Info.TenantId }.OfType<string>().ToHashSet(StringComparer.OrdinalIgnoreCase);
-        return (await SnapshotStore.ListAsync(SnapshotsRoot, ct)).Where(s => tenants.Contains(s.TenantId)).ToList();
-    }
+    /// <summary>
+    /// Every snapshot, newest first. A snapshot of a tenant that isn't signed in is listed too, marked as such: it's
+    /// compared once that tenant is signed in again.
+    /// </summary>
+    public async Task<IReadOnlyList<Snapshot>> ListSnapshotsAsync(CancellationToken ct = default) =>
+        await SnapshotStore.ListAsync(SnapshotsRoot, ct);
 
     /// <summary>Compares a tenant now with an earlier snapshot of it.</summary>
     public Task CompareWithSnapshotAsync(Snapshot snapshot, IProgress<string> progress, CancellationToken ct = default) =>
         Logged("Comparing with a snapshot", async () =>
         {
             RefuseWhileWorking();
-            // A snapshot is only ever compared with the tenant it was taken of.
-            var tenant = new[] { state.Source, state.Destination }.FirstOrDefault(t => string.Equals(t?.Info.TenantId, snapshot.TenantId, StringComparison.OrdinalIgnoreCase))
+            // A snapshot is only ever compared with the tenant it was taken of. A saved baseline has the same tenant ID,
+            // but its policies come from a file, so it's never the one compared.
+            var tenant = new[] { state.Source, state.Destination }.FirstOrDefault(t => t is { IsBaseline: false } && string.Equals(t.Info.TenantId, snapshot.TenantId, StringComparison.OrdinalIgnoreCase))
                 ?? throw new InvalidOperationException($"This snapshot is of {snapshot.TenantName}. Sign in to it to compare.");
             var report = await TenantComparer.CompareWithSnapshotAsync(snapshot, tenant.Clients, tenant.Info.DisplayName, progress, ct);
             state.SetComparison(report);
             DiagnosticLog.Info($"Compared with a snapshot: {report.Count(Difference.OnlyInFirst)} removed, {report.Count(Difference.OnlyInSecond)} added, " +
                 $"{report.Count(Difference.Different)} changed, {report.Count(Difference.Same)} the same.");
         });
+
+    // ---------- Baselines (save a template once, apply it to other tenants) ----------
+
+    /// <summary>
+    /// Saves the policies selected on Discover as a baseline, with what they point at in the source. Only reads.
+    /// Nothing in the source is needed again once it's saved.
+    /// </summary>
+    public async Task<Baseline> SaveBaselineAsync(IProgress<string> progress, CancellationToken ct = default)
+    {
+        Baseline? saved = null;
+        await Logged("Saving a baseline", async () =>
+        {
+            RefuseWhileWorking();
+            var source = state.Source ?? throw new InvalidOperationException("Sign in to the source tenant first.");
+            if (source.IsBaseline)
+                throw new InvalidOperationException("This is already a saved baseline.");
+            var selected = state.Exported.Where(e => state.Selected.Contains(MigrationState.Key(e))).ToList();
+            if (selected.Count == 0)
+                throw new InvalidOperationException("Choose at least one policy to save in the baseline.");
+            var name = $"{source.Info.DisplayName} baseline";
+            var baseline = await BaselineStore.CaptureAsync(name, source.Clients, source.Info, source.IsDemo, selected, state.Exported, progress, ct);
+            EnsureSameTenants(source, null);
+            saved = await BaselineStore.SaveAsync(baseline, BaselinesRoot, ct);
+            DiagnosticLog.Info($"Saved a baseline of {selected.Count} policies.");
+        });
+        return saved!;
+    }
+
+    /// <summary>Baselines saved so far, newest first.</summary>
+    public async Task<IReadOnlyList<Baseline>> ListBaselinesAsync(CancellationToken ct = default) =>
+        await BaselineStore.ListAsync(BaselinesRoot, ct);
+
+    /// <summary>
+    /// Uses a saved baseline as the source instead of a signed-in tenant. The destination must be signed in first, as
+    /// for any source. Nothing is read from Microsoft 365 for the source.
+    /// </summary>
+    public Task UseBaselineAsync(Baseline baseline) => Logged("Using a baseline", () =>
+    {
+        ThrowIfWorking();
+        if (IsDemo)
+            throw new InvalidOperationException("Leave the demo first, then use a baseline.");
+        if (state.Destination is null)
+            throw new InvalidOperationException("Sign in to the destination tenant first.");
+        var info = new TenantInfo(baseline.TenantId, baseline.TenantName, baseline.InitialDomain, baseline.DefaultDomain,
+            $"Saved baseline (from {baseline.TenantName})", "Saved baseline", false, [], [], []);
+        state.Set(TenantRole.Source, new TenantConnection
+        {
+            Role = TenantRole.Source,
+            Info = info,
+            Roles = new RoleCheck(true, [], "Read from a saved baseline. Nothing is read from the source tenant."),
+            Clients = new TenantClients(new OfflineGraph(baseline.Responses)),
+            Baseline = baseline,
+            IsDemo = baseline.IsDemo,
+        });
+        DiagnosticLog.Info($"Using the baseline \"{baseline.Name}\" as the source.");
+        return Task.CompletedTask;
+    });
+
+    string BaselinesRoot => state.Destination?.IsDemo == true || state.Source?.IsDemo == true
+        ? System.IO.Path.Combine(Demo.DemoTenants.RunsRoot, "Baselines")
+        : BaselineStore.DefaultRoot;
 
     // ---------- Restore from a snapshot (writes, but only into the destination) ----------
 
@@ -464,6 +551,16 @@ public sealed class MigrationService(AuthService auth, MigrationState state, Mov
         if (mapping.TargetType != ResourceRegistry.Group)
             state.Selected.Add(mapping.Key);
         state.NotifyChanged();
+    }
+
+    /// <summary>
+    /// Takes back what <see cref="CreateInDestination"/> added to the migration, before the mapping gets another
+    /// decision. Otherwise the object would still be created although the admin no longer wants it.
+    /// </summary>
+    public void UndoCreate(Mapping mapping)
+    {
+        if (mapping.Kind == MatchKind.CreateInDestination && mapping.TargetType != ResourceRegistry.Group)
+            state.Selected.Remove(mapping.Key);
     }
 
     // ---------- Deploy ----------
@@ -646,6 +743,23 @@ public sealed class MigrationService(AuthService auth, MigrationState state, Mov
         var folder = ProjectStore.NewProjectFolder(source.Info.InitialDomain, destination.Info.InitialDomain);
         var selected = state.Exported.Where(e => state.Selected.Contains(MigrationState.Key(e)));
         await ProjectStore.SaveExportAsync(folder, selected, ct);
+        state.SavedExportFolder = folder;
+        state.NotifyChanged();
+        return folder;
+    }
+
+    public async Task<string> SaveAsBuiltAsync(CancellationToken ct = default)
+    {
+        var source = state.Source ?? throw new InvalidOperationException("Sign in to the source tenant first.");
+        var destination = state.Destination ?? throw new InvalidOperationException("Sign in to the destination tenant first.");
+        var folder = ProjectStore.NewProjectFolder(source.Info.InitialDomain, destination.Info.InitialDomain);
+        var selected = state.Exported.Where(e => state.Selected.Contains(MigrationState.Key(e)));
+        
+        System.IO.Directory.CreateDirectory(folder);
+        var html = Movewise.Core.Reports.AsBuiltReport.GenerateHtml(source.Info, selected);
+        var path = System.IO.Path.Combine(folder, "AsBuiltReport.html");
+        await System.IO.File.WriteAllTextAsync(path, html, ct);
+        
         state.SavedExportFolder = folder;
         state.NotifyChanged();
         return folder;

@@ -203,6 +203,9 @@ public static class TenantComparer
     /// </summary>
     static JsonObject Comparable(ResourceType type, JsonObject settings)
     {
+        // PowerShell creates don't copy a priority (a new rule lands among the destination's own), so one that differs isn't a difference.
+        if (type.UsesPowerShell && !type.KeepsPriority)
+            settings = WithoutPriority(settings);
         if (type.Children is not { } children || settings[children.Property] is not JsonArray)
             return settings;
         var copy = (JsonObject)settings.DeepClone();
@@ -224,6 +227,23 @@ public static class TenantComparer
                         StripServiceValues(child);
                     break;
             }
+        }
+    }
+
+    /// <summary>A copy without Priority, at the top level and in each rule of a policy's rules.</summary>
+    static JsonObject WithoutPriority(JsonObject settings)
+    {
+        var copy = (JsonObject)settings.DeepClone();
+        RemovePriority(copy);
+        if (copy["rules"] is JsonArray rules)
+            foreach (var rule in rules.OfType<JsonObject>())
+                RemovePriority(rule);
+        return copy;
+
+        static void RemovePriority(JsonObject obj)
+        {
+            foreach (var name in obj.Select(p => p.Key).Where(k => k.Equals("Priority", StringComparison.OrdinalIgnoreCase)).ToList())
+                obj.Remove(name);
         }
     }
 
