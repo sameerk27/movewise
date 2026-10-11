@@ -221,6 +221,31 @@ public class UpdateTests
     }
 
     [Fact]
+    public async Task Updating_several_powershell_policies_reads_their_type_once()
+    {
+        var shell = new FakePowerShell()
+            .Returns("Get-AntiPhishPolicy",
+                """{ "Name": "Execs", "Guid": "ap-1", "Identity": "Execs", "PhishThresholdLevel": 1 }""",
+                """{ "Name": "Finance", "Guid": "ap-2", "Identity": "Finance", "PhishThresholdLevel": 1 }""")
+            .Accepts("Set-AntiPhishPolicy", "Identity", "PhishThresholdLevel");
+        var tenant = new TenantClients(new FakeGraph(), Exchange: shell);
+        ExportedResource[] sources =
+        [
+            Item(AntiPhish, """{ "Name": "Execs", "PhishThresholdLevel": 3 }""", "src-1"),
+            Item(AntiPhish, """{ "Name": "Finance", "PhishThresholdLevel": 2 }""", "src-2"),
+        ];
+        var report = await PreflightCheck.RunAsync(tenant, Destination, sources, new MappingPlan([]), new PreflightChoices { NameConflicts = ConflictChoice.Update });
+        var run = DeployPlanner.Plan(report, new MappingPlan([]), Source, Destination);
+        var readsBefore = shell.CallsTo("Get-AntiPhishPolicy").Count();
+
+        await Deployer.RunAsync(tenant, run, () => Task.CompletedTask);
+
+        Assert.All(run.Steps, s => Assert.Equal(StepStatus.Done, s.Status));
+        Assert.Equal(2, shell.CallsTo("Set-AntiPhishPolicy").Count());
+        Assert.Equal(1, shell.CallsTo("Get-AntiPhishPolicy").Count() - readsBefore);
+    }
+
+    [Fact]
     public async Task Settings_a_set_cmdlet_doesnt_take_are_named_and_left_as_they_are()
     {
         var shell = PhishDestination().Accepts("Set-AntiPhishPolicy", "Identity", "PhishThresholdLevel");

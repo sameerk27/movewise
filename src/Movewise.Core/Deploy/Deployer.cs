@@ -31,17 +31,21 @@ public static class Deployer
         if (run.RolledBack is not null)
             throw new InvalidOperationException("This run was rolled back. Start a new deployment instead.");
 
+        // Updating a PowerShell policy reads its whole type (cmdlets list them all, with their rules). Read once per
+        // run and shared: each step reads its own policy before changing it, so none sees another's change.
+        var reads = new Dictionary<string, Task<ExportResult>>();
         foreach (var step in run.Steps.Where(s => s.IsUnfinished).ToList())
         {
             ct.ThrowIfCancellationRequested();
-            await RunStepAsync(tenant, run, step, save, changed, CancellationToken.None);
+            await RunStepAsync(tenant, run, step, save, changed, reads, CancellationToken.None);
         }
 
         run.Completed = DateTimeOffset.Now;
         await save();
     }
 
-    static async Task RunStepAsync(TenantClients tenant, DeployRun run, DeployStep step, Func<Task> save, Action<DeployStep>? changed, CancellationToken ct)
+    static async Task RunStepAsync(TenantClients tenant, DeployRun run, DeployStep step, Func<Task> save, Action<DeployStep>? changed,
+        Dictionary<string, Task<ExportResult>> reads, CancellationToken ct)
     {
         async Task Update(StepStatus status, string? message = null)
         {
@@ -127,7 +131,7 @@ public static class Deployer
                     var shell = tenant.PowerShellFor(type);
                     if (step.Previous is null)
                     {
-                        var current = await ReadPowerShellForUpdateAsync(tenant, type, existingId, ct);
+                        var current = await ReadPowerShellForUpdateAsync(tenant, type, existingId, reads, ct);
                         step.Previous = SettingsDiff.Only(current, values.Select(p => p.Key).Concat(step.Rules is null ? [] : ["rules"]));
                         step.DestinationId = existingId;
                     }
@@ -310,11 +314,18 @@ public static class Deployer
     }
 
     /// <summary>An existing PowerShell policy as read for migrating, with its rules: what an update changes, and rollback puts back.</summary>
-    static async Task<JsonObject> ReadPowerShellForUpdateAsync(TenantClients tenant, ResourceType type, string id, CancellationToken ct)
+    static async Task<JsonObject> ReadPowerShellForUpdateAsync(TenantClients tenant, ResourceType type, string id,
+        Dictionary<string, Task<ExportResult>> reads, CancellationToken ct)
     {
-        var result = await Exporter.ExportAsync(tenant, [type], null, ct);
+        if (!reads.TryGetValue(type.Id, out var read) || read.IsFaulted || read.IsCanceled)
+            reads[type.Id] = read = Exporter.ExportAsync(tenant, [type], null, ct);
+        var result = await read;
         if (result.Warnings.FirstOrDefault() is { } warning)
+        {
+            // Perhaps throttled: the next step reads it again rather than failing on this answer too.
+            reads.Remove(type.Id);
             throw new InvalidOperationException(warning.Message);
+        }
         return result.Items.FirstOrDefault(i => string.Equals(i.SourceId, id, StringComparison.OrdinalIgnoreCase))?.Settings
             ?? throw new InvalidOperationException("It's no longer in the destination.");
     }

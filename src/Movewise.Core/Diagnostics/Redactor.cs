@@ -50,6 +50,9 @@ public static partial class Redactor
     // The signed-in tenants' own domains, whatever they end in (contoso.consulting).
     static readonly HashSet<string> KnownDomains = new(StringComparer.OrdinalIgnoreCase);
 
+    // One pattern for all of them, built when the list changes rather than for every line logged.
+    static Regex? _knownDomain;
+
     /// <summary>Adds a tenant's domains, so they're removed even where the general pattern wouldn't catch them.</summary>
     public static void Remember(params string?[] domains)
     {
@@ -60,6 +63,10 @@ public static partial class Redactor
                 if (!string.IsNullOrWhiteSpace(domain) && !IsMicrosoft(domain))
                     KnownDomains.Add(domain.Trim());
             }
+            // Longest first, so contoso.co.uk goes before contoso.co could take part of it.
+            _knownDomain = KnownDomains.Count == 0 ? null : new Regex(
+                $@"(?<![A-Za-z0-9-])(?:{string.Join("|", KnownDomains.OrderByDescending(d => d.Length).Select(Regex.Escape))})(?![A-Za-z0-9-])",
+                RegexOptions.IgnoreCase | RegexOptions.Compiled);
         }
     }
 
@@ -95,11 +102,8 @@ public static partial class Redactor
         result = ProfilePath().Replace(result, @"\Users\[user]");
         result = OneDriveOwner().Replace(result, "/personal/[user]");
         result = TenantDomain().Replace(result, m => $"[tenant]{m.Groups[1].Value}.{m.Groups[2].Value.ToLowerInvariant()}");
-        string[] known;
-        lock (KnownDomains)
-            known = KnownDomains.OrderByDescending(d => d.Length).ToArray();
-        foreach (var domain in known)
-            result = Regex.Replace(result, $@"(?<![A-Za-z0-9-]){Regex.Escape(domain)}(?![A-Za-z0-9-])", "[domain]", RegexOptions.IgnoreCase);
+        if (Volatile.Read(ref _knownDomain) is { } knownDomain)
+            result = knownDomain.Replace(result, "[domain]");
         result = DomainName().Replace(result, m => IsMicrosoft(m.Value) || DotNetName().IsMatch(m.Value) ? m.Value : "[domain]");
         result = Guid().Replace(result, m => m.Groups[1].Value[..4] + "…");
         result = IpAddress().Replace(result, "[ip]");

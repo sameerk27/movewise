@@ -423,14 +423,14 @@ public static partial class PreflightCheck
                 if (changed.Contains("rules") && type.Rules is { } ruleCmdlets && !RulesDiffer(type, ruleCmdlets, transformed[index].Desired, existing.Settings))
                     changed.Remove("rules");
 
-                // A PATCH or a Set cmdlet sends only the source's values. A setting only the destination has a value
-                // for would stay as it is, so it isn't listed as a change.
+                // A PATCH or a Set cmdlet sends only the settings the source has (an explicit null clears one). A setting
+                // the source doesn't have at all would stay as it is, so it isn't listed as a change.
                 var cantChange = new List<string>();
                 if (type.UpdateWith != UpdateMethod.Put)
                 {
                     var desired = transformed[index].Desired;
                     var onlyInDestination = changed
-                        .Where(k => k is not ("rules" or "assignments" or "apps") && desired[k] is null)
+                        .Where(k => k is not ("rules" or "assignments" or "apps") && !desired.ContainsKey(k))
                         .ToList();
                     cantChange.AddRange(onlyInDestination);
                     changed = changed.Except(onlyInDestination).ToList();
