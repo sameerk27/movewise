@@ -229,7 +229,9 @@
                 progress = message;
                 InvokeAsync(StateHasChanged);
             }));
-            baselineSaved = $"Saved \"{saved.Name}\" with {saved.Items.Count} policies. Use it as a source from Connect, on any tenant.";
+            baselineSaved = saved.IsDemo
+                ? $"Saved \"{saved.Name}\" with {saved.Items.Count} policies. It's a demo baseline: it's listed on Baselines, and stays with the demo tenants."
+                : $"Saved \"{saved.Name}\" with {saved.Items.Count} policies. Use it as a source from Connect, on any tenant.";
         }, "Couldn't save the baseline.");
     }
 

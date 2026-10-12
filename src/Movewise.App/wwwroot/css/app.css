@@ -66,6 +66,9 @@ p { margin: 0; }
 .head-row { display: flex; justify-content: space-between; align-items: flex-end; gap: 24px; }
 .head-text { display: flex; flex-direction: column; gap: 4px; }
 .head-actions { display: flex; gap: 10px; flex-wrap: wrap; }
+/* In a page header the buttons stay on one line; the title and its description wrap instead. */
+.page-head .head-text { flex: 1 1 auto; min-width: 0; }
+.page-head .head-actions { flex-wrap: nowrap; flex-shrink: 0; }
 .content { flex-grow: 1; overflow-y: auto; padding: 20px 32px; display: flex; flex-direction: column; gap: 16px; }
 /* Cards keep their full height; the content area scrolls instead of squashing them. */
 .content > * { flex-shrink: 0; }

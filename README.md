@@ -7,7 +7,7 @@
 ![Platform](https://img.shields.io/badge/platform-Windows%2010%20%7C%2011-0078D4)
 ![.NET](https://img.shields.io/badge/.NET-8-512BD4)
 ![UI](https://img.shields.io/badge/UI-WPF%20%2B%20Blazor%20Hybrid-5C2D91)
-![Status](https://img.shields.io/badge/status-pre--release%200.1.0-orange)
+![Status](https://img.shields.io/badge/status-pre--release%200.2.0-orange)
 [![License: MIT](https://img.shields.io/badge/license-MIT-green)](LICENSE)
 
 [Download](#download) · [Build from source](#build-from-source) · [How it works](#how-it-works) · [What it migrates](#what-it-migrates) · [Docs](#documentation)
@@ -31,20 +31,22 @@ flowchart LR
 
 | Step | What happens |
 |---|---|
-| **Connect** | Sign in to each tenant through the Windows sign-in broker. Guest accounts and same-tenant pairs are refused, and each side's admin roles and licenses are checked |
+| **Connect** | Sign in to each tenant through the Windows sign-in broker. Guest accounts and same-tenant pairs are refused, and each side's admin roles and licenses are checked. Tick the services to migrate: only those are read |
 | **Discover** | Policies are read from the source with everything they point at: groups, users, apps, locations, filters, scope tags, domains, mailboxes and sites |
 | **Map** | Each dependency is matched in the destination automatically where possible (by name, email, app ID or domain), or matched, created or removed by hand. Mappings export to and import from CSV |
 | **Pre-flight** | Every policy is rewritten for the destination and checked: unmatched objects, name conflicts, missing licenses and roles, removed exclusions, and a before/after view per policy |
 | **Deploy** | Groups and policies are created in order, with progress saved after every object. A run survives a crash, a stop or a dropped connection |
 
-### Compare and drift
+### Compare, snapshots, baselines and drift
 
-The **Compare** screen only reads; nothing changes in either tenant.
+Besides **Migrations**, the sidebar has four screens. All of them only read, except a restore you start yourself.
 
-- **Source with destination.** Shows which policies and settings are only in one tenant, and which are set differently. The source's policies are first put in the destination's terms (groups, users, locations matched as for a migration), so a group with a different ID isn't a difference.
-- **A tenant with a snapshot.** Save a snapshot of a tenant, and later see what was added, removed or changed since: drift, or a check after a change window. Snapshots are kept in `%LOCALAPPDATA%\MovewiseData\Snapshots`.
-
-Each item shows both versions side by side, with only the settings that differ. The comparison exports to CSV.
+| Screen | What it does |
+|---|---|
+| **Compare** | **Source with destination** shows which policies and settings are only in one tenant, and which are set differently. The source's policies are first put in the destination's terms (groups, users, locations matched as for a migration), so a group with a different ID isn't a difference. **A tenant with a snapshot** shows what was added, removed or changed since the snapshot. Each item shows both versions side by side, with only the settings that differ, and the comparison exports to CSV. Also opens from the Deploy screen once a run has finished |
+| **Snapshots** | Take a point-in-time copy of either tenant, list them by tenant, and compare one with its tenant as it is now. Kept in `%LOCALAPPDATA%\MovewiseData\Snapshots` until you delete them |
+| **Baselines** | Policies saved from a migration (**Save as baseline** on Discover), to apply to other tenants later without signing in to the template tenant again: on Connect, a baseline can be the source once the destination is signed in. Each baseline lists its policies |
+| **Drift monitor** | **Check now** compares each signed-in tenant with its latest snapshot and lists what changed since, with the settings that differ. Open any item in Compare to see both versions or restore it |
 
 **Restore from a snapshot.** After comparing a tenant with a snapshot, **Restore…** recreates what was removed since and puts changed settings and policies back as they were. It runs the same pre-flight checks as a migration, then opens on the Deploy screen as a run you start, and can roll back. Restored policies come back in report-only or test mode unless you choose to recreate them as they were. A policy changed since, even renamed, is updated back in place. A restore never deletes anything added since. A snapshot can only be restored into the tenant it was taken of, signed in as the destination: the source is never changed.
 
@@ -57,7 +59,7 @@ Each item shows both versions side by side, with only the settings that differ. 
 
 ## Download
 
-> **Pre-release.** 0.1.0 is an unsigned test build. Try it against test tenants, and don't hand it to client admins until it's signed (see [what's left](#before-the-first-release)).
+> **Pre-release.** 0.2.0 is an unsigned test build. Try it against test tenants, and don't hand it to client admins until it's signed (see [what's left](#before-the-first-release)).
 
 1. Open the **[latest release](https://github.com/sameerk27/movewise/releases)**. Pre-releases are listed there too.
 2. Download the file for your case:
@@ -86,6 +88,8 @@ Each item shows both versions side by side, with only the settings that differ. 
 |---|---|
 | `Projects` | Saved exports. They hold full policy settings, so they're kept out of Documents, which is often synced to OneDrive |
 | `Runs` | One folder per deployment. `run.json` is what resume and rollback work from, and `destination-before` holds the destination's policies as they were before the run |
+| `Snapshots` | Snapshots of tenants, for Compare, Snapshots and the Drift monitor |
+| `Baselines` | Saved baselines, with what their policies point at in the template tenant |
 | `Logs` | Daily support logs, with tokens, secrets, addresses, tenant domains, usernames and IPs removed. **Save support log** in the sidebar zips the last two weeks |
 
 ## Build from source
@@ -196,6 +200,12 @@ Phases 0 to 5 of the build plan:
 - [x] Demo mode: "Try the demo" on the Connect screen connects two built-in sample tenants (Contoso and Fabrikam) that live only in memory, so every step, including deploy and rollback, can be tried without real tenants or an app registration. Demo runs are kept in a temporary folder
 - [x] "Check services" on each tenant tests Microsoft Graph, Exchange Online, Security & Compliance and Teams, and says why any of them fails
 - [x] First build: 0.1.0, unsigned, published as a GitHub pre-release for testing
+- [x] Compare tenants, or a tenant with a snapshot, with restore from a snapshot as a run that can be rolled back
+- [x] Sidebar screens for Compare, Snapshots, Baselines and the Drift monitor
+- [x] Baselines: save the chosen policies once, apply them to other tenants
+- [x] Choose the services to migrate on Connect; discovery and Compare read only those
+- [x] One Movewise per Windows user, and a window that fits small screens
+- [x] 0.2.0, unsigned, published for testing
 
 </details>
 
