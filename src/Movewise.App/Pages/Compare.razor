@@ -1,0 +1,542 @@
+@page "/compare"
+@using System.IO
+@using System.Text.RegularExpressions
+@using Movewise.Core.Compare
+@using Movewise.Core.Preflight
+@using Movewise.Core.Registry
+@inject MigrationState State
+@inject MigrationService Migration
+@inject NavigationManager Navigation
+@implements IDisposable
+
+<div class="page">
+    <header class="page-head">
+        <div class="head-row">
+            <div class="head-text">
+                <h1>Compare</h1>
+                <p class="muted">See what differs between the two tenants, or what changed in one since a snapshot. This only reads: nothing changes in either tenant.</p>
+            </div>
+        </div>
+    </header>
+
+    <div class="content">
+        @if (State.Source is null && State.Destination is null)
+        {
+            <div class="alert warn">Sign in to a tenant first. <a href="">Go to Connect</a></div>
+        }
+        else
+        {
+            <section class="card pad stack gap compare-setup">
+                <div class="compare-modes" role="radiogroup" aria-label="What to compare">
+                    <label class="@(mode == Mode.Tenants ? "on" : "")">
+                        <input type="radio" name="mode" checked="@(mode == Mode.Tenants)" @onchange="@(() => SetMode(Mode.Tenants))" />
+                        <span class="stack">
+                            <b>Source with destination</b>
+                            <span class="muted small">Policies missing from the destination, extra there, or set differently. Groups and users are matched first, so different IDs aren't differences.</span>
+                        </span>
+                    </label>
+                    <label class="@(mode == Mode.Snapshot ? "on" : "")">
+                        <input type="radio" name="mode" checked="@(mode == Mode.Snapshot)" @onchange="@(() => SetMode(Mode.Snapshot))" />
+                        <span class="stack">
+                            <b>A tenant with a snapshot</b>
+                            <span class="muted small">What was added, removed or changed since you saved a snapshot of it: drift, or a check after a change window.</span>
+                        </span>
+                    </label>
+                </div>
+
+                <fieldset class="compare-services">
+                    <legend class="small muted">Services</legend>
+                    @foreach (var service in MigrationService.Supported)
+                    {
+                        <label>
+                            <input type="checkbox" checked="@services.Contains(service)" disabled="@Migration.IsWorking" @onchange="@(e => Toggle(service, e.Value is true))" />
+                            @ServiceName(service)
+                        </label>
+                    }
+                </fieldset>
+
+                @if (mode == Mode.Tenants)
+                {
+                    <div class="head-actions">
+                        @if (State.Source is null || State.Destination is null)
+                        {
+                            <span class="muted small">Sign in to both tenants to compare them.</span>
+                        }
+                        <button class="btn primary" disabled="@(busy || State.Source is null || State.Destination is null || services.Count == 0 || Migration.IsWorking)" @onclick="CompareTenantsAsync">
+                            Compare tenants
+                        </button>
+                    </div>
+                }
+                else
+                {
+                    <div class="stack gap">
+                        <div class="head-actions compare-snapshot-row">
+                            <select @bind="snapshotPath" disabled="@(busy || snapshots.Count == 0)" aria-label="Snapshot to compare with">
+                                @if (snapshots.Count == 0)
+                                {
+                                    <option value="">No snapshots yet: save one below</option>
+                                }
+                                @foreach (var snapshot in snapshots)
+                                {
+                                    <option value="@snapshot.Path">@snapshot.TenantName · @snapshot.Taken.LocalDateTime.ToString("d MMM yyyy HH:mm") · @snapshot.Items.Count items</option>
+                                }
+                            </select>
+                            <button class="btn primary" disabled="@(busy || SelectedSnapshot is null || Migration.IsWorking)" @onclick="CompareSnapshotAsync">
+                                Compare with snapshot
+                            </button>
+                        </div>
+                        <div class="head-actions compare-snapshot-row">
+                            <span class="muted small">Save what a tenant has now, to compare it with later:</span>
+                            @foreach (var (role, tenant) in Tenants)
+                            {
+                                <button class="btn ghost" disabled="@(busy || services.Count == 0 || Migration.IsWorking)" @onclick="@(() => SaveSnapshotAsync(role))">
+                                    Save a snapshot of @tenant.Info.DisplayName
+                                </button>
+                            }
+                        </div>
+                    </div>
+                }
+            </section>
+
+            @if (busy)
+            {
+                <div class="card pad" role="status">@progress</div>
+            }
+            @if (error is not null)
+            {
+                <div class="alert bad" role="alert">@error</div>
+            }
+            @if (message is not null)
+            {
+                <div class="alert ok" role="status">@message</div>
+            }
+
+            @if (Report is { } report && !busy)
+            {
+                <div class="stats four">
+                    <div class="card stat"><b class="@(report.Count(Difference.OnlyInFirst) > 0 ? "warn-text" : "")">@report.Count(Difference.OnlyInFirst)</b><span class="muted">@LowerFirst(CompareCsv.Describe(report, Difference.OnlyInFirst))</span></div>
+                    <div class="card stat"><b class="@(report.Count(Difference.OnlyInSecond) > 0 ? "warn-text" : "")">@report.Count(Difference.OnlyInSecond)</b><span class="muted">@LowerFirst(CompareCsv.Describe(report, Difference.OnlyInSecond))</span></div>
+                    <div class="card stat"><b class="@(report.Count(Difference.Different) > 0 ? "bad-text" : "")">@report.Count(Difference.Different)</b><span class="muted">@LowerFirst(CompareCsv.Describe(report, Difference.Different))</span></div>
+                    <div class="card stat"><b>@report.Count(Difference.Same)</b><span class="muted">the same</span></div>
+                </div>
+
+                @if (report.Warnings.Count > 0)
+                {
+                    <div class="alert warn">
+                        Some types couldn't be read, so they're left out of the comparison:
+                        <ul class="small">
+                            @foreach (var warning in report.Warnings)
+                            {
+                                <li>@warning.Type.PluralName: @warning.Message</li>
+                            }
+                        </ul>
+                    </div>
+                }
+
+                @if (report.IsDrift && report.Snapshot is not null && report.Items.Any(i => i.CanRestore))
+                {
+                    <section class="card pad stack gap restore">
+                        <div class="head-row">
+                            <div class="stack">
+                                <b>Restore from this snapshot</b>
+                                <span class="muted small">Recreate what was removed since, and put changed settings back as they were. Every restore is a run you can roll back.</span>
+                            </div>
+                            <button class="btn ghost" @onclick="ToggleRestore" aria-expanded="@(showRestore ? "true" : "false")">@(showRestore ? "Hide" : "Restore…")</button>
+                        </div>
+
+                        @if (showRestore)
+                        {
+                            @if (!CanRestoreHere(report.Snapshot))
+                            {
+                                <div class="alert warn">To restore @report.Snapshot.TenantName, sign in to it as the destination. Movewise never changes the source.</div>
+                            }
+                            else
+                            {
+                                <ul class="restore-list">
+                                    @foreach (var item in report.Items.Where(i => i.CanRestore))
+                                    {
+                                        <li>
+                                            <label>
+                                                <input type="checkbox" checked="@restoreChoice.Contains(item)" disabled="@busy" @onchange="@(e => ToggleRestoreItem(item, e.Value is true))" />
+                                                <span><b>@item.Name</b> <span class="muted small">@item.Type.DisplayName · @(item.Difference == Difference.OnlyInFirst ? "recreate" : $"set back: {string.Join(", ", item.ChangedSettings)}")</span></span>
+                                            </label>
+                                        </li>
+                                    }
+                                </ul>
+                                @if (NotRestorable(report) is { Length: > 0 } left)
+                                {
+                                    <span class="muted small">@left</span>
+                                }
+                                <label class="small"><input type="checkbox" @bind="keepOriginalState" @bind:after="ClearRestoreCheck" disabled="@busy" /> Recreate policies as they were, switched on. Otherwise they come back in report-only or test mode, to check first.</label>
+                                <label class="small"><input type="checkbox" @bind="leaveOutBlocked" @bind:after="ClearRestoreCheck" disabled="@busy" /> Leave out anything pre-flight blocks, and restore the rest.</label>
+                                <div class="head-actions">
+                                    <button class="btn ghost" disabled="@(busy || restoreChoice.Count == 0 || Migration.IsWorking)" @onclick="CheckRestoreAsync">Check the restore</button>
+                                    <button class="btn primary" disabled="@(busy || State.Restore is not { Report.CanDeploy: true } || Migration.IsWorking)" @onclick="PrepareRestoreAsync">Continue to restore</button>
+                                </div>
+
+                                @if (State.Restore is { } restore)
+                                {
+                                    <div class="stats">
+                                        <div class="card stat"><b>@restore.Report.CreateCount</b><span class="muted">to recreate or put back</span></div>
+                                        <div class="card stat"><b class="@(restore.Report.SkipCount > 0 ? "warn-text" : "")">@restore.Report.SkipCount</b><span class="muted">skipped or already there</span></div>
+                                        <div class="card stat"><b class="@(restore.Report.BlockedCount > 0 ? "bad-text" : "")">@restore.Report.BlockedCount</b><span class="muted">blocked</span></div>
+                                    </div>
+                                    <div class="card findings">
+                                        @foreach (var finding in restore.Report.Findings)
+                                        {
+                                            <div class="finding @SeverityClass(finding.Severity)">
+                                                <div class="stack">
+                                                    <b>@finding.Title</b>
+                                                    <span class="muted small">@finding.Detail</span>
+                                                    @if (finding.Items.Count > 0)
+                                                    {
+                                                        <span class="small">@string.Join(", ", finding.Items.Take(5))@(finding.Items.Count > 5 ? $" and {finding.Items.Count - 5} more" : "")</span>
+                                                    }
+                                                </div>
+                                            </div>
+                                        }
+                                    </div>
+                                }
+                            }
+                        }
+                    </section>
+                }
+
+                <div class="tabs" role="tablist" aria-label="Show">
+                    @foreach (var (value, label) in Filters(report))
+                    {
+                        <button role="tab" class="tab @(filter == value ? "on" : "")" aria-selected="@(filter == value ? "true" : "false")" @onclick="@(() => filter = value)">@label</button>
+                    }
+                </div>
+
+                <div class="preflight">
+                    <section class="card table compare-table" aria-label="Comparison">
+                        <div class="row head"><span>Name</span><span>Type</span><span>Result</span><span>Settings that differ</span></div>
+                        @if (!Visible(report).Any())
+                        {
+                            <div class="row"><span class="muted">Nothing here.</span></div>
+                        }
+                        @foreach (var item in Visible(report))
+                        {
+                            <button type="button" class="row selectable @(selected == item ? "selected" : "")" aria-pressed="@(selected == item ? "true" : "false")" @onclick="@(() => selected = item)">
+                                <span class="strong">@item.Name</span>
+                                <span class="muted small">@item.Type.DisplayName</span>
+                                <span><span class="pill @PillClass(item.Difference)">@CompareCsv.Describe(report, item.Difference)</span></span>
+                                <span class="small">@string.Join(", ", item.ChangedSettings.Take(4))@(item.ChangedSettings.Count > 4 ? $" +{item.ChangedSettings.Count - 4}" : "")</span>
+                            </button>
+                        }
+                    </section>
+
+                    <section class="card pad stack gap">
+                        @if (selected is { } shown)
+                        {
+                            <div class="stack">
+                                <b>@shown.Name</b>
+                                <span class="muted small">@shown.Type.DisplayName · @CompareCsv.Describe(report, shown.Difference)</span>
+                                @foreach (var note in shown.Notes)
+                                {
+                                    <span class="small warn-text">@note</span>
+                                }
+                            </div>
+                            <span class="muted small">@report.FirstName (−) and @report.SecondName (+).@(shown.Difference == Difference.Different ? " Only what differs is shown." : "")</span>
+                            <div class="diff mono" aria-label="@report.FirstName compared with @report.SecondName">
+                                @foreach (var line in Lines(shown))
+                                {
+                                    if (line.Collapsed > 0)
+                                    {
+                                        <div class="diff-gap">… @line.Collapsed unchanged line@(line.Collapsed == 1 ? "" : "s")</div>
+                                    }
+                                    else
+                                    {
+                                        <div class="diff-line @line.Css"><span class="diff-mark" aria-hidden="true">@line.Mark</span>@line.Text</div>
+                                    }
+                                }
+                            </div>
+                        }
+                        else
+                        {
+                            <span class="muted">Select a row to see both versions side by side.</span>
+                        }
+                    </section>
+                </div>
+            }
+        }
+    </div>
+
+    @if (Report is not null && !busy)
+    {
+        <footer class="page-foot">
+            <button class="btn ghost" @onclick="DownloadReport">Download comparison (CSV)</button>
+        </footer>
+    }
+</div>
+
+@code {
+    enum Mode { Tenants, Snapshot }
+    enum Filter { Differences, OnlyInFirst, OnlyInSecond, Different, Same, All }
+    record Line(string Text, string Css, string Mark, int Collapsed = 0);
+
+    const int Context = 2;
+
+    Mode mode = Mode.Tenants;
+    Filter filter = Filter.Differences;
+    // The services chosen on Connect, shared with Discover and deployment: Compare reads what they read.
+    HashSet<M365Service> services => State.Services;
+    IReadOnlyList<Snapshot> snapshots = [];
+    string? snapshotPath;
+    ComparedItem? selected;
+    bool busy;
+    string progress = "";
+    string? error;
+    string? message;
+
+    // Restore from a snapshot.
+    bool showRestore;
+    bool keepOriginalState;
+    bool leaveOutBlocked = true;
+    readonly HashSet<ComparedItem> restoreChoice = [];
+
+    ComparisonReport? Report => State.Comparison;
+
+    bool CanRestoreHere(Snapshot snapshot) =>
+        string.Equals(State.Destination?.Info.TenantId, snapshot.TenantId, StringComparison.OrdinalIgnoreCase);
+
+    void ToggleRestore()
+    {
+        showRestore = !showRestore;
+        if (showRestore && restoreChoice.Count == 0 && Report is { } report)
+            restoreChoice.UnionWith(report.Items.Where(i => i.CanRestore));
+    }
+
+    void ToggleRestoreItem(ComparedItem item, bool on)
+    {
+        if (on) restoreChoice.Add(item);
+        else restoreChoice.Remove(item);
+        ClearRestoreCheck();
+    }
+
+    // What was checked no longer matches the choice or its options, so it has to be checked again.
+    void ClearRestoreCheck() => State.SetRestore(null);
+
+    static string NotRestorable(ComparisonReport report)
+    {
+        var changed = report.Items.Count(i => i.Difference == Difference.Different && !i.CanRestore);
+        var added = report.Count(Difference.OnlyInSecond);
+        var parts = new List<string>();
+        if (changed > 0) parts.Add($"{changed} changed since can't be put back: Movewise can't change {(changed == 1 ? "that kind" : "those kinds")} in place");
+        if (added > 0) parts.Add($"{added} added since {(added == 1 ? "is" : "are")} left alone: a restore never deletes anything");
+        return parts.Count == 0 ? "" : string.Join(". ", parts) + ".";
+    }
+
+    Task CheckRestoreAsync() => RunAsync(p => Migration.CheckRestoreAsync(restoreChoice.ToList(), keepOriginalState, leaveOutBlocked, p), keepResults: true);
+
+    async Task PrepareRestoreAsync()
+    {
+        error = null;
+        try
+        {
+            await Migration.PrepareRestoreAsync();
+            Navigation.NavigateTo("deploy");
+        }
+        catch (Exception ex) when (ex is not OperationCanceledException)
+        {
+            error = ex.Message;
+        }
+    }
+
+    static string SeverityClass(Severity severity) => severity switch
+    {
+        Severity.Blocker => "bad",
+        Severity.Warning => "warn",
+        _ => "info",
+    };
+    Snapshot? SelectedSnapshot => snapshots.FirstOrDefault(s => s.Path == snapshotPath);
+
+    IEnumerable<(TenantRole Role, TenantConnection Tenant)> Tenants =>
+        new[] { (TenantRole.Source, State.Source), (TenantRole.Destination, State.Destination) }
+            .Where(t => t.Item2 is not null)
+            .Select(t => (t.Item1, t.Item2!));
+
+    protected override async Task OnInitializedAsync()
+    {
+        State.Changed += OnStateChanged;
+        // A restore checked on an earlier visit was for a choice and options this page no longer shows.
+        State.SetRestore(null);
+        // A snapshot comparison opened from Snapshots or Drift is shown as one, whichever tenants are signed in.
+        if (State.Comparison?.Snapshot is not null || State.Source is null || State.Destination is null)
+            mode = Mode.Snapshot;
+        await LoadSnapshotsAsync();
+        // Its snapshot is the one picked in the list.
+        if (State.Comparison?.Snapshot?.Path is { } shown && snapshots.Any(s => s.Path == shown))
+            snapshotPath = shown;
+    }
+
+    async Task LoadSnapshotsAsync()
+    {
+        snapshots = await Migration.ListSnapshotsAsync();
+        if (SelectedSnapshot is null)
+            snapshotPath = snapshots.FirstOrDefault()?.Path;
+    }
+
+    void SetMode(Mode value)
+    {
+        mode = value;
+        error = null;
+        message = null;
+    }
+
+    void Toggle(M365Service service, bool on)
+    {
+        if (on) services.Add(service);
+        else State.RemoveService(service);
+    }
+
+    Task CompareTenantsAsync() => RunAsync(p => Migration.CompareTenantsAsync(services, p));
+
+    Task CompareSnapshotAsync() => SelectedSnapshot is { } snapshot ? RunAsync(p => Migration.CompareWithSnapshotAsync(snapshot, p)) : Task.CompletedTask;
+
+    async Task SaveSnapshotAsync(TenantRole role)
+    {
+        Snapshot? saved = null;
+        await RunAsync(async p => saved = await Migration.SaveSnapshotAsync(role, services, p));
+        if (saved is null)
+            return;
+        await LoadSnapshotsAsync();
+        snapshotPath = saved.Path;
+        message = $"Saved a snapshot of {saved.TenantName}: {saved.Items.Count} policies and settings. Compare with it any time from here.";
+    }
+
+    /// <param name="keepResults">True when the comparison on screen stays (checking a restore), so the selection and filter do too.</param>
+    async Task RunAsync(Func<IProgress<string>, Task> work, bool keepResults = false)
+    {
+        busy = true;
+        error = null;
+        message = null;
+        if (!keepResults)
+        {
+            selected = null;
+            filter = Filter.Differences;
+            showRestore = false;
+            restoreChoice.Clear();
+        }
+        var reporter = new Progress<string>(text => { progress = text; InvokeAsync(StateHasChanged); });
+        try
+        {
+            await work(reporter);
+        }
+        catch (Exception ex) when (ex is not OperationCanceledException)
+        {
+            error = ex.Message;
+        }
+        finally
+        {
+            busy = false;
+        }
+    }
+
+    IEnumerable<(Filter, string)> Filters(ComparisonReport report)
+    {
+        var differences = report.Items.Count(i => i.Difference != Difference.Same);
+        yield return (Filter.Differences, $"All differences ({differences})");
+        yield return (Filter.OnlyInFirst, $"{CompareCsv.Describe(report, Difference.OnlyInFirst)} ({report.Count(Difference.OnlyInFirst)})");
+        yield return (Filter.OnlyInSecond, $"{CompareCsv.Describe(report, Difference.OnlyInSecond)} ({report.Count(Difference.OnlyInSecond)})");
+        yield return (Filter.Different, $"{CompareCsv.Describe(report, Difference.Different)} ({report.Count(Difference.Different)})");
+        yield return (Filter.Same, $"Same ({report.Count(Difference.Same)})");
+        yield return (Filter.All, $"Everything ({report.Items.Count})");
+    }
+
+    IEnumerable<ComparedItem> Visible(ComparisonReport report) => report.Items.Where(i => filter switch
+    {
+        Filter.Differences => i.Difference != Difference.Same,
+        Filter.OnlyInFirst => i.Difference == Difference.OnlyInFirst,
+        Filter.OnlyInSecond => i.Difference == Difference.OnlyInSecond,
+        Filter.Different => i.Difference == Difference.Different,
+        Filter.Same => i.Difference == Difference.Same,
+        _ => true,
+    });
+
+    /// <summary>Both versions line by line. For differing items only the settings that differ, with a little context.</summary>
+    IEnumerable<Line> Lines(ComparedItem item)
+    {
+        var first = item.First is null ? "" : Readable(Normalizer.ToStableJson(Only(item.First, item)));
+        var second = item.Second is null ? "" : Normalizer.ToStableJson(Only(item.Second, item));
+        var lines = LineDiff.Compare(first, second);
+        var near = new bool[lines.Count];
+        for (var i = 0; i < lines.Count; i++)
+            if (lines[i].Kind != DiffKind.Same)
+                for (var j = Math.Max(0, i - Context); j <= Math.Min(lines.Count - 1, i + Context); j++)
+                    near[j] = true;
+
+        var hidden = 0;
+        for (var i = 0; i < lines.Count; i++)
+        {
+            if (!near[i] && item.Difference != Difference.Same)
+            {
+                hidden++;
+                continue;
+            }
+            if (hidden > 0)
+            {
+                yield return new Line("", "", "", hidden);
+                hidden = 0;
+            }
+            yield return lines[i].Kind switch
+            {
+                DiffKind.Removed => new Line(lines[i].Text, "removed", "−"),
+                DiffKind.Added => new Line(lines[i].Text, "added", "+"),
+                _ => new Line(lines[i].Text, "", " "),
+            };
+        }
+        if (hidden > 0)
+            yield return new Line("", "", "", hidden);
+    }
+
+    static System.Text.Json.Nodes.JsonObject Only(System.Text.Json.Nodes.JsonObject settings, ComparedItem item) =>
+        item.Difference == Difference.Different ? SettingsDiff.Only(settings, item.ChangedSettings) : settings;
+
+    // Objects the destination doesn't have yet are stand-ins in the translated source policy.
+    static string Readable(string json) =>
+        Regex.Replace(json, @"\{\{movewise:new:([^:}]+):[^}]+\}\}", m => $"(not in the destination yet: {MappingNames.Singular(m.Groups[1].Value).ToLowerInvariant()})");
+
+    static string LowerFirst(string text) => text.Length > 0 ? char.ToLowerInvariant(text[0]) + text[1..] : text;
+
+    static string PillClass(Difference difference) => difference switch
+    {
+        Difference.Same => "ok",
+        Difference.Different => "bad",
+        _ => "warn",
+    };
+
+    static string ServiceName(M365Service service) => service switch
+    {
+        M365Service.Entra => "Entra ID",
+        M365Service.Defender => "Defender for Office 365",
+        M365Service.DefenderEndpoint => "Defender for Endpoint",
+        M365Service.Exchange => "Exchange Online",
+        M365Service.SharePoint => "SharePoint and OneDrive",
+        _ => service.ToString(),
+    };
+
+    void DownloadReport()
+    {
+        if (Report is null)
+            return;
+        var path = FileDialogs.SaveCsv("Save comparison", $"Movewise comparison {DateTime.Now:yyyy-MM-dd HHmm}.csv");
+        if (path is null)
+            return;
+        try
+        {
+            File.WriteAllText(path, CompareCsv.Write(Report));
+            error = null;
+            message = $"Saved the comparison to {path}.";
+        }
+        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
+        {
+            error = $"Couldn't save the comparison. If the file is open in Excel, close it and try again. ({ex.Message})";
+        }
+    }
+
+    void OnStateChanged() => InvokeAsync(StateHasChanged);
+
+    public void Dispose() => State.Changed -= OnStateChanged;
+}

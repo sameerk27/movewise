@@ -150,7 +150,8 @@ public static class Exporter
             || (target.Settings["DisplayName"] is JsonValue display && display.TryGetValue<string>(out var text) && text.Equals(name, StringComparison.OrdinalIgnoreCase));
     }
 
-    static void ReplaceAt(JsonNode? node, string[] segments, int index, Func<string, string?> replace)
+    /// <summary>Replaces the values at a reference path (such as "grantControls.authenticationStrength.id") for which <paramref name="replace"/> gives a new one.</summary>
+    internal static void ReplaceAt(JsonNode? node, string[] segments, int index, Func<string, string?> replace)
     {
         var segment = segments[index];
         var isArray = segment.EndsWith("[]", StringComparison.Ordinal);

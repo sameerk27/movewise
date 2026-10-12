@@ -13,6 +13,14 @@ public static class Program
         // Must run first: when the installer or updater starts Movewise to finish installing, this handles it and exits.
         VelopackApp.Build().Run();
 
+        // One Movewise per user: two could deploy into the same tenant at once.
+        using var single = new Mutex(true, @"Local\Movewise.SingleInstance", out var first);
+        if (!first)
+        {
+            MessageBox.Show("Movewise is already open. Switch to it from the taskbar.", "Movewise", MessageBoxButton.OK, MessageBoxImage.Information);
+            return;
+        }
+
         DiagnosticLog.Prune();
         DiagnosticLog.Info($"Movewise {DiagnosticLog.Version} started on Windows {Environment.OSVersion.Version}.");
         AppDomain.CurrentDomain.UnhandledException += (_, e) => DiagnosticLog.Error("Movewise stopped unexpectedly.", e.ExceptionObject as Exception);

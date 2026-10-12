@@ -17,6 +17,12 @@ public sealed record TransformOptions
     public IReadOnlySet<string> Rename { get; init; } = new HashSet<string>();
 
     public string RenameSuffix { get; init; } = " (migrated)";
+
+    /// <summary>
+    /// Put policies in a state that can't block or delete anything yet (test mode, simulation, switched off). Off when
+    /// comparing tenants, where a policy has to be seen as it really is.
+    /// </summary>
+    public bool MakeSafe { get; init; } = true;
 }
 
 /// <summary>A change the transformer made, as shown to the admin.</summary>
@@ -103,7 +109,7 @@ public static class Transformer
             }
         }
 
-        if (item.Type.MakeSafe is { } makeSafe)
+        if (options.MakeSafe && item.Type.MakeSafe is { } makeSafe)
             changes.AddRange(makeSafe(desired).Select(description => new PolicyChange(description, IsTestMode: true)));
 
         if (options.Rename.Contains(key) && desired[nameProperty] is JsonValue nameValue && nameValue.TryGetValue<string>(out var name))

@@ -149,8 +149,24 @@ sealed class DemoGraph : IGraphWriter
                     added.Add(body.DeepClone());
                     return (JsonObject)body.DeepClone();
                 case "updatedefinitionvalues":
-                    // Administrative templates: the settings, all at once.
-                    item[Hidden + "definitionValues"] = body["added"]?.DeepClone() ?? new JsonArray();
+                    // Administrative templates: the settings, all at once. Kept the way Graph returns them when read,
+                    // with the definition and presentations expanded, rather than as the bindings that were sent.
+                    item[Hidden + "definitionValues"] = new JsonArray((body["added"] as JsonArray ?? []).OfType<JsonObject>()
+                        .Select(added => (JsonNode)new JsonObject
+                        {
+                            ["id"] = Guid.NewGuid().ToString(),
+                            ["enabled"] = added["enabled"]?.DeepClone(),
+                            ["definition"] = new JsonObject { ["id"] = LastKey(added["definition@odata.bind"]) },
+                            ["presentationValues"] = new JsonArray((added["presentationValues"] as JsonArray ?? []).OfType<JsonObject>()
+                                .Select(value =>
+                                {
+                                    var read = (JsonObject)value.DeepClone();
+                                    read.Remove("presentation@odata.bind");
+                                    read["id"] = Guid.NewGuid().ToString();
+                                    read["presentation"] = new JsonObject { ["id"] = LastKey(value["presentation@odata.bind"]) };
+                                    return (JsonNode)read;
+                                }).ToArray()),
+                        }).ToArray());
                     return null;
                 default:
                     throw new GraphException(HttpStatusCode.BadRequest, "BadRequest", $"The demo tenant can't handle POST {path}.");
@@ -170,6 +186,21 @@ sealed class DemoGraph : IGraphWriter
                 : throw NotFound(path);
             foreach (var (name, value) in body.AsObject())
                 target[name] = value?.DeepClone();
+        }
+    }
+
+    /// <summary>Replaces an item of a collection with the given one; its ID and hidden parts (assignments) stay.</summary>
+    public async Task PutAsync(string path, JsonNode body, CancellationToken ct = default)
+    {
+        await Pause(ct);
+        lock (_gate)
+        {
+            var (basePath, _) = Split(path);
+            var (item, _) = Find(basePath) ?? throw NotFound(path);
+            foreach (var name in item.Select(p => p.Key).Where(k => k != "id" && !k.StartsWith(Hidden, StringComparison.Ordinal)).ToList())
+                item.Remove(name);
+            foreach (var (name, value) in body.AsObject().Where(p => p.Key != "id"))
+                item[name] = value?.DeepClone();
         }
     }
 
@@ -294,6 +325,12 @@ sealed class DemoGraph : IGraphWriter
             copy.Remove(key);
         return copy;
     }
+
+    // The last ('id') in a binding such as "./groupPolicyDefinitions('d1')/presentations('p1')".
+    static string? LastKey(JsonNode? binding) =>
+        binding?.ToString() is { } text && text.LastIndexOf("('", StringComparison.Ordinal) is var start and >= 0
+            ? text[(start + 2)..].TrimEnd(')', '\'')
+            : null;
 
     static string Text(JsonObject item, string name) =>
         item[name] is JsonValue value && value.TryGetValue<string>(out var text) ? text : "";

@@ -261,6 +261,7 @@ public class DeployRetryTests
         }
 
         public Task PatchAsync(string to, JsonNode body, CancellationToken ct = default) => inner.PatchAsync(to, body, ct);
+        public Task PutAsync(string to, JsonNode body, CancellationToken ct = default) => inner.PutAsync(to, body, ct);
         public Task DeleteAsync(string to, CancellationToken ct = default) => inner.DeleteAsync(to, ct);
         public Task<JsonObject> GetObjectAsync(string to, CancellationToken ct = default) => inner.GetObjectAsync(to, ct);
         public Task<IReadOnlyList<JsonObject>> GetCollectionAsync(string to, CancellationToken ct = default) => inner.GetCollectionAsync(to, ct);

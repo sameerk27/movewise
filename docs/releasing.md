@@ -10,6 +10,7 @@ A release is a signed `Movewise-win-Setup.exe` for new installs, plus update pac
    { "ClientId": "…", "UpdateUrl": "https://downloads.example.com/movewise" }
    ```
    With `UpdateUrl` empty, Movewise never checks for updates.
+   When `UpdateUrl` is a GitHub repository, only full releases are offered as updates. Set `"UpdateIncludesPrereleases": true` to offer pre-releases as well, for example on a test PC.
 3. **Code signing.** Admins run Movewise with admin accounts to two tenants, so ship only signed builds. Unsigned installers also trigger a Windows SmartScreen warning. Either:
    - a code signing certificate (OV or EV) in the Windows certificate store, used through `signtool` with `-SignParams`, or
    - Azure Trusted Signing, with `-AzureTrustedSignFile metadata.json`.

@@ -66,6 +66,11 @@ public sealed class GraphClient : IGraphWriter
         using var response = await SendAsync(HttpMethod.Patch, path, body, ct);
     }
 
+    public async Task PutAsync(string path, JsonNode body, CancellationToken ct = default)
+    {
+        using var response = await SendAsync(HttpMethod.Put, path, body, ct);
+    }
+
     public async Task DeleteAsync(string path, CancellationToken ct = default)
     {
         using var response = await SendAsync(HttpMethod.Delete, path, null, ct);

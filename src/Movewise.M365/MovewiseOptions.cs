@@ -34,6 +34,12 @@ public sealed class MovewiseOptions
     /// <summary>Where releases are published (the folder Publish.ps1 fills), or empty to turn update checks off.</summary>
     public string UpdateUrl { get; set; } = "";
 
+    /// <summary>
+    /// With a GitHub UpdateUrl, whether pre-releases are offered as updates too. Off by default, so a build tagged for
+    /// testing never reaches admins who are deploying to real tenants.
+    /// </summary>
+    public bool UpdateIncludesPrereleases { get; set; }
+
     public ClientIdSource ClientIdSource { get; private set; }
 
     public bool IsConfigured => IsValidClientId(ClientId);

@@ -4,9 +4,13 @@ using Movewise.Core.Deploy;
 using Movewise.Core.Export;
 using Movewise.Core.Mapping;
 using Movewise.Core.Preflight;
+using Movewise.Core.Registry;
 using Movewise.Core.Tenants;
 
 namespace Movewise.App.State;
+
+/// <summary>A restore from a snapshot that pre-flight has checked: what it would create or put back, and the matches it uses.</summary>
+public sealed record RestorePlan(Movewise.Core.Compare.Snapshot Snapshot, PreflightReport Report, MappingPlan Mapping);
 
 /// <summary>A signed-in tenant: who signed in, what the tenant is, and whether their roles are enough.</summary>
 public sealed class TenantConnection
@@ -24,6 +28,14 @@ public sealed class TenantConnection
 
     /// <summary>True for the built-in sample tenants: nothing leaves the app.</summary>
     public bool IsDemo { get; init; }
+
+    /// <summary>
+    /// For a source that's a saved baseline rather than a signed-in tenant: its policies and what they point at come from
+    /// the file. There's no account, no session and nothing to read from Microsoft 365.
+    /// </summary>
+    public Movewise.Core.Baselines.Baseline? Baseline { get; init; }
+
+    public bool IsBaseline => Baseline is not null;
 
     /// <summary>Sessions to close when the tenant is signed out.</summary>
     public IReadOnlyList<IAsyncDisposable> Sessions { get; init; } = [];
@@ -50,6 +62,40 @@ public sealed class MigrationState
 
     public IReadOnlyList<ManualSetupItem> ManualSetup { get; private set; } = [];
     public IReadOnlyList<string> ManualSetupWarnings { get; private set; } = [];
+
+    /// <summary>
+    /// The services chosen on Connect. Discovery reads only these. SharePoint starts off, as in the design.
+    /// </summary>
+    public HashSet<M365Service> Services { get; } =
+    [
+        M365Service.Entra, M365Service.Intune, M365Service.Purview, M365Service.Defender,
+        M365Service.DefenderEndpoint, M365Service.Exchange, M365Service.Teams,
+    ];
+
+    /// <summary>The services the last read covered. A service ticked after that read hasn't been read yet.</summary>
+    public IReadOnlySet<M365Service> ReadServices { get; private set; } = new HashSet<M365Service>();
+
+    /// <summary>
+    /// Unticks a service on Connect. Its policies and hand-setup items are dropped with it, so they can't be selected
+    /// or deployed after the service was unticked.
+    /// </summary>
+    public void RemoveService(M365Service service)
+    {
+        Services.Remove(service);
+        // The last dry run would still list them, and Deploy would count them as ready.
+        if (Exported.Any(e => e.Type.Service == service))
+            Preflight = null;
+        Selected.ExceptWith(Exported.Where(e => e.Type.Service == service).Select(Key).ToList());
+        Exported = Exported.Where(e => e.Type.Service != service).ToList();
+        ExportWarnings = ExportWarnings.Where(w => w.Type.Service != service).ToList();
+        ReadServices = ReadServices.Where(s => s != service).ToHashSet();
+        if (service == M365Service.Exchange)
+        {
+            ManualSetup = [];
+            ManualSetupWarnings = [];
+        }
+        Changed?.Invoke();
+    }
 
     /// <summary>Keys (see <see cref="Key"/>) of the exported policies selected for migration.</summary>
     public HashSet<string> Selected { get; } = [];
@@ -100,10 +146,31 @@ public sealed class MigrationState
 
     public TenantConnection? Get(TenantRole role) => role == TenantRole.Source ? Source : Destination;
 
+    /// <summary>The last comparison on the Compare screen. Cleared when either tenant changes.</summary>
+    public Movewise.Core.Compare.ComparisonReport? Comparison { get; private set; }
+
+    public void SetComparison(Movewise.Core.Compare.ComparisonReport? report)
+    {
+        Comparison = report;
+        Restore = null;
+        Changed?.Invoke();
+    }
+
+    /// <summary>The checked restore from a snapshot, waiting to be prepared as a run. Cleared with the comparison.</summary>
+    public RestorePlan? Restore { get; private set; }
+
+    public void SetRestore(RestorePlan? restore)
+    {
+        Restore = restore;
+        Changed?.Invoke();
+    }
+
     public void Set(TenantRole role, TenantConnection? connection)
     {
-        // Choices made for one pair of tenants don't carry over to another.
+        // Choices made for one pair of tenants don't carry over to another, and neither does a comparison.
         PreflightChoices = new PreflightChoices();
+        Comparison = null;
+        Restore = null;
         if (role == TenantRole.Source)
         {
             Source = connection;
@@ -126,16 +193,19 @@ public sealed class MigrationState
         Changed?.Invoke();
     }
 
-    public void SetExported(ExportResult result)
+    /// <param name="read">The services this read covered. Items of services no longer chosen are left out.</param>
+    public void SetExported(ExportResult result, IReadOnlySet<M365Service>? read = null)
     {
-        Exported = result.Items;
-        ExportWarnings = result.Warnings;
+        var items = result.Items.Where(i => Services.Contains(i.Type.Service)).ToList();
+        Exported = items;
+        ExportWarnings = result.Warnings.Where(w => Services.Contains(w.Type.Service)).ToList();
         SavedExportFolder = null;
         Mapping = null;
         _mappingSelection = null;
         Preflight = null;
         Selected.Clear();
-        Selected.UnionWith(result.Items.Select(Key));
+        Selected.UnionWith(items.Select(Key));
+        ReadServices = read?.Where(Services.Contains).ToHashSet() ?? new HashSet<M365Service>();
         Changed?.Invoke();
     }
 

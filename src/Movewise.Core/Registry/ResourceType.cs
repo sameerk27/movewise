@@ -45,6 +45,18 @@ public sealed record ReferenceRule(string Path, string TargetType)
         Path.Contains("exclude", StringComparison.OrdinalIgnoreCase) || Path.Contains("ExceptIf", StringComparison.OrdinalIgnoreCase) || Path.Contains("Exception", StringComparison.Ordinal);
 }
 
+/// <summary>How an existing policy is changed.</summary>
+public enum UpdateMethod
+{
+    None,
+
+    /// <summary>Only the changed properties are sent.</summary>
+    Patch,
+
+    /// <summary>The whole policy is sent, replacing it (settings catalog policies).</summary>
+    Put,
+}
+
 /// <summary>Which API reads and writes a policy type.</summary>
 public enum Backend
 {
@@ -68,11 +80,14 @@ public enum Backend
 /// <param name="NameParameter">The New cmdlet parameter that names the policy (Teams cmdlets use Identity), or null when the name comes with the settings (a sensitive information type rule package names itself).</param>
 public sealed record PolicyCmdlets(string Get, string New, string Remove, IReadOnlyList<string>? GetSwitches = null, string? NameParameter = "Name")
 {
-    /// <summary>
-    /// A Set cmdlet for the settings New doesn't take (New-RemoteDomain takes only a name and domain). Run with the
-    /// new object's identity once it exists, with the settings it accepts that New didn't.
-    /// </summary>
+    /// <summary>The Set cmdlet that changes an existing one, given its Identity: how a policy already in the destination is updated.</summary>
     public string? Set { get; init; }
+
+    /// <summary>
+    /// True when <see cref="Set"/> also has to follow New, for the settings New doesn't take (New-RemoteDomain takes
+    /// only a name and domain). It's run with the new object's identity, with the settings New didn't take.
+    /// </summary>
+    public bool SetAfterCreate { get; init; }
 
     /// <summary>Parameters passed to Get, New and Remove alike, such as the list an allow/block entry belongs to.</summary>
     public IReadOnlyDictionary<string, string>? Scope { get; init; }
@@ -119,7 +134,11 @@ public sealed record ChildItems(string ReadPath, string Property, Func<JsonArray
 /// True when rules are read one policy at a time (Get with PolicyParameter); otherwise every rule is read at once
 /// and matched to its policy by <paramref name="PolicyProperty"/>.
 /// </param>
-public sealed record RuleCmdlets(string Get, string New, string Remove, string PolicyProperty, string PolicyParameter, bool ListPerPolicy = false);
+public sealed record RuleCmdlets(string Get, string New, string Remove, string PolicyProperty, string PolicyParameter, bool ListPerPolicy = false)
+{
+    /// <summary>The Set cmdlet that changes an existing rule, given its name: how a rule is updated with its policy.</summary>
+    public string? Set { get; init; }
+}
 
 /// <summary>Everything the engine needs to know about one kind of policy.</summary>
 /// <param name="ListPath">Graph path, relative to https://graph.microsoft.com/, that lists every item.</param>
@@ -204,6 +223,18 @@ public sealed record ResourceType(
     /// since a new rule's priority has to fit among the destination's rules.
     /// </summary>
     public bool KeepsPriority { get; init; }
+
+    /// <summary>How an existing policy of this type is changed to match another: PATCH (the default for Graph), PUT, or not at all.</summary>
+    public UpdateMethod UpdateWith { get; init; } = UpdateMethod.Patch;
+
+    /// <summary>Properties an update can't change, such as a compliance policy's actions, which have their own API.</summary>
+    public IReadOnlyList<string> NotUpdatable { get; init; } = [];
+
+    /// <summary>
+    /// True when Movewise can change an existing policy of this type, rather than only create new ones: Graph types
+    /// with PATCH or PUT, and PowerShell types that have a Set cmdlet (see <see cref="PolicyCmdlets.Set"/>).
+    /// </summary>
+    public bool CanUpdate => UpdateWith != UpdateMethod.None && !IsSettings && !ReferenceOnly && (!UsesPowerShell || Cmdlets?.Set is not null);
 
     /// <summary>For settings that exist in every tenant and are changed, not created. See <see cref="SettingsCmdlets"/>.</summary>
     public SettingsCmdlets? Settings { get; init; }

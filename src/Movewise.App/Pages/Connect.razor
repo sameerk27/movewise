@@ -51,6 +51,32 @@
             }
         }
 
+        @if (State.Destination is not null && State.Source is null && !IsDemo && baselines.Count > 0)
+        {
+            <section class="card baseline-picker" aria-label="Saved baselines">
+                <div class="card-head">
+                    <h2>Or use a saved baseline as the source</h2>
+                    <span class="muted small">Apply a template's policies to this tenant without signing in to the template.</span>
+                </div>
+                <ul class="baseline-list">
+                    @foreach (var baseline in baselines)
+                    {
+                        <li>
+                            <span class="stack">
+                                <b>@baseline.Name</b>
+                                <span class="muted small">@baseline.Items.Count policies · saved @baseline.Saved.LocalDateTime.ToString("d MMM yyyy HH:mm") from @baseline.TenantName</span>
+                            </span>
+                            <button class="btn ghost" disabled="@Migration.IsWorking" @onclick="@(() => UseBaselineAsync(baseline))">Use as source</button>
+                        </li>
+                    }
+                </ul>
+                @if (baselineError is not null)
+                {
+                    <div class="alert bad" role="alert">@baselineError</div>
+                }
+            </section>
+        }
+
         <div class="tenants">
             <TenantCard Role="TenantRole.Source" />
             <div class="arrow" aria-hidden="true">
@@ -67,12 +93,14 @@
             <div class="services">
                 @foreach (var service in Services)
                 {
-                    var ready = MigrationService.Supported.Contains(service.Service);
-                    <div class="service @(ready ? "on" : "")">
-                        <b>@service.Name</b>
-                        <span class="muted small">@service.What</span>
-                        <span class="pill @(ready ? "ok" : "neutral")">@(ready ? "Included" : "Coming later")</span>
-                    </div>
+                    var chosen = State.Services.Contains(service.Service);
+                    <label class="service @(chosen ? "on" : "")">
+                        <input type="checkbox" checked="@chosen" disabled="@Migration.IsWorking" @onchange="@(e => ToggleService(service.Service, e.Value is true))" />
+                        <span class="stack">
+                            <b>@service.Name</b>
+                            <span class="muted small">@service.What</span>
+                        </span>
+                    </label>
                 }
             </div>
         </section>
@@ -80,7 +108,7 @@
 
     <footer class="page-foot">
         <span class="muted">@FooterHint</span>
-        <button class="btn primary" disabled="@(!State.ReadyToDiscover)" @onclick="@(() => Nav.NavigateTo("discover"))">
+        <button class="btn primary" disabled="@(!State.ReadyToDiscover || State.Services.Count == 0)" @onclick="@(() => Nav.NavigateTo("discover"))">
             Discover policies
             <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M5 12h14M13 6l6 6-6 6"></path></svg>
         </button>
@@ -92,18 +120,26 @@
 
     static readonly ServiceInfo[] Services =
     [
-        new(M365Service.Entra, "Entra ID", "Conditional Access, named locations, authentication strengths; user settings and sign-in methods"),
-        new(M365Service.Intune, "Intune", "Settings catalog, device configuration, compliance, app protection, Autopilot, filters, scope tags"),
-        new(M365Service.Purview, "Purview", "DLP and retention policies, sensitivity labels and label policies, Endpoint DLP settings"),
-        new(M365Service.Defender, "Defender for Office 365", "Anti-phishing, anti-spam, anti-malware, Safe Links, Safe Attachments, quarantine policies, Tenant Allow/Block List; the default policies, preset security policies and tenant-wide settings"),
-        new(M365Service.Exchange, "Exchange Online", "Mail flow rules, journal rules, remote domains, Outlook on the web policies, mailbox retention tags and policies, mobile device mailbox policies, and their defaults"),
-        new(M365Service.Teams, "Teams", "Meeting, messaging, calling, app setup and permission, channels and update policies, with their group assignments; org-wide policies, external and guest access, meeting settings"),
-        new(M365Service.SharePoint, "SharePoint and OneDrive", "Sharing, sync and site creation settings"),
-        new(M365Service.DefenderEndpoint, "Defender for Endpoint", "Indicators (blocked or allowed files, IPs, URLs and certificates), custom detection rules"),
+        new(M365Service.Entra, "Entra ID", "Conditional Access, sign-in methods, named locations, roles"),
+        new(M365Service.Intune, "Intune", "Configuration, compliance, app protection, Autopilot"),
+        new(M365Service.Purview, "Purview", "DLP, retention, sensitivity labels, alert policies"),
+        new(M365Service.Defender, "Defender for Office 365", "Anti-phishing, anti-spam, Safe Links, Safe Attachments"),
+        new(M365Service.Exchange, "Exchange Online", "Mail flow rules, org config, DKIM"),
+        new(M365Service.Teams, "Teams", "Meeting, messaging and app policies"),
+        new(M365Service.SharePoint, "SharePoint and OneDrive", "Sharing and access control settings"),
+        new(M365Service.DefenderEndpoint, "Defender for Endpoint", "Indicators, custom detection rules"),
     ];
 
+    void ToggleService(M365Service service, bool on)
+    {
+        if (on) State.Services.Add(service);
+        else State.RemoveService(service);
+        State.NotifyChanged();
+    }
+
     string FooterHint =>
-        State.Source is not null && State.Destination is not null ? (IsDemo ? "Both demo tenants are connected." : "Both tenants are connected. Nothing has been changed.")
+        State.ReadyToDiscover && State.Services.Count == 0 ? "Choose at least one service to continue."
+        : State.Source is not null && State.Destination is not null ? (IsDemo ? "Both demo tenants are connected." : "Both tenants are connected. Nothing has been changed.")
         : State.Destination is null && !Migration.RegistrationIsManaged ? "Sign in to the destination tenant first: that sets Movewise up."
         : State.Destination is null ? "Sign in to the destination tenant to continue."
         : "Now sign in to the source tenant.";
@@ -115,7 +151,29 @@
     // Signing out of either demo tenant leaves the demo altogether.
     Task LeaveDemoAsync() => Migration.DisconnectAsync(TenantRole.Destination);
 
-    protected override void OnInitialized() => State.Changed += OnStateChanged;
+    IReadOnlyList<Movewise.Core.Baselines.Baseline> baselines = [];
+    string? baselineError;
+
+    protected override async Task OnInitializedAsync()
+    {
+        State.Changed += OnStateChanged;
+        // Demo baselines stay with the demo: a real tenant is never given one, and the demo never gets a real one.
+        baselines = (await Migration.ListBaselinesAsync()).Where(b => !b.IsDemo).ToList();
+    }
+
+    async Task UseBaselineAsync(Movewise.Core.Baselines.Baseline baseline)
+    {
+        baselineError = null;
+        try
+        {
+            await Migration.UseBaselineAsync(baseline);
+            Nav.NavigateTo("discover");
+        }
+        catch (Exception ex)
+        {
+            baselineError = $"Couldn't use the baseline. {ex.Message}";
+        }
+    }
 
     void OnStateChanged() => InvokeAsync(StateHasChanged);
 

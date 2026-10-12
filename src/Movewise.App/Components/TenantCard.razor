@@ -55,7 +55,14 @@
             <div class="tenant-name">@info.DisplayName</div>
             <div class="mono muted">@info.InitialDomain · @Short(info.TenantId)</div>
         </div>
-        <div class="kv"><span class="muted">Signed in as</span><span class="mono">@info.UserPrincipalName</span></div>
+        @if (Connection.Baseline is { } baseline)
+        {
+            <div class="kv"><span class="muted">Saved baseline</span><span>@baseline.Name, saved @baseline.Saved.LocalDateTime.ToString("d MMM yyyy HH:mm")</span></div>
+        }
+        else
+        {
+            <div class="kv"><span class="muted">Signed in as</span><span class="mono">@info.UserPrincipalName</span></div>
+        }
         <div class="check @(Connection.Roles.IsSufficient ? "ok" : "warn")">
             <div>@Connection.Roles.Summary</div>
             @if (Connection.Roles.Missing.Count > 0)
@@ -83,11 +90,15 @@
             }
         </div>
         <div class="actions">
-            <button class="btn ghost" disabled="@checking" @onclick="CheckServicesAsync">
-                @(checking ? checkProgress : "Check services")
-            </button>
+            @* A baseline is read from a file: there's no service to check. *@
+            @if (!Connection.IsBaseline)
+            {
+                <button class="btn ghost" disabled="@checking" @onclick="CheckServicesAsync">
+                    @(checking ? checkProgress : "Check services")
+                </button>
+            }
             <button class="btn ghost" disabled="@Migration.IsWorking" title="@(Migration.IsWorking ? "Available once the deployment finishes" : null)" @onclick="DisconnectAsync">
-                @(Connection.IsDemo ? "Leave the demo" : "Sign out")
+                @(Connection.IsBaseline ? "Stop using the baseline" : Connection.IsDemo ? "Leave the demo" : "Sign out")
             </button>
         </div>
         if (checks is not null)

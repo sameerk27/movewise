@@ -106,12 +106,43 @@ public static partial class DeployPlanner
             children = childList as JsonArray;
         }
 
+        var displayName = body[type.IdentityProperty]?.GetValue<string>() ?? result.Source.DisplayName;
+
+        // Updating a policy already in the destination: PATCH sends only what differs (and the type, which Graph
+        // needs for derived types); PUT sends the whole policy. Assignments and apps follow as for a new one, but
+        // only when they differ.
+        if (result.UpdatesId is { } existingId)
+        {
+            if (type.UpdateWith == UpdateMethod.Patch)
+            {
+                var changed = result.ChangedSettings.Where(body.ContainsKey).ToList();
+                if (body["@odata.type"] is not null)
+                    changed.Add("@odata.type");
+                body = SettingsDiff.Only(body, changed.Distinct());
+            }
+            var changes = new HashSet<string>(result.ChangedSettings, StringComparer.OrdinalIgnoreCase);
+            return new DeployStep
+            {
+                Key = result.Key,
+                TargetType = type.Id,
+                SourceId = result.Source.SourceId,
+                DisplayName = displayName,
+                Body = body,
+                // Assignments posted one at a time can't be replaced that way; an update leaves them as they are.
+                Assignments = changes.Contains("assignments") && !type.AssignOneByOne ? assignments ?? [] : null,
+                Apps = changes.Contains("apps") ? apps : null,
+                // Rules are changed (or added) with their policy when they differ.
+                Rules = changes.Contains("rules") ? rules : null,
+                UpdateOf = existingId,
+            };
+        }
+
         return new DeployStep
         {
             Key = result.Key,
             TargetType = type.Id,
             SourceId = result.Source.SourceId,
-            DisplayName = body[type.IdentityProperty]?.GetValue<string>() ?? result.Source.DisplayName,
+            DisplayName = displayName,
             Body = body,
             Assignments = assignments,
             Apps = apps,

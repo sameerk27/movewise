@@ -105,6 +105,7 @@
                                         <div class="choice" role="radiogroup" aria-label="What to do with name conflicts">
                                             <label><input type="radio" name="conflicts" checked="@(State.PreflightChoices.NameConflicts == ConflictChoice.Skip)" @onchange="@(() => SetConflictsAsync(ConflictChoice.Skip))" /> Skip them</label>
                                             <label><input type="radio" name="conflicts" checked="@(State.PreflightChoices.NameConflicts == ConflictChoice.CreateWithSuffix)" @onchange="@(() => SetConflictsAsync(ConflictChoice.CreateWithSuffix))" /> Create with "(migrated)" added</label>
+                                            <label title="Kinds that can't be changed in place are skipped."><input type="radio" name="conflicts" checked="@(State.PreflightChoices.NameConflicts == ConflictChoice.Update)" @onchange="@(() => SetConflictsAsync(ConflictChoice.Update))" /> Update the existing ones to match</label>
                                         </div>
                                     }
                                     @if (finding.Choice == FindingChoice.RiskPoliciesWithoutP2)
@@ -218,8 +219,8 @@
             // Settings are changed, not created: the destination's values now against what they'll become.
             var lines = preview.Current is { } current
                 ? LineDiff.Compare(
-                    Normalizer.ToStableJson(SettingsDiff.Only(current, preview.ChangedSettings)),
-                    Readable(Normalizer.ToStableJson(SettingsDiff.Only(preview.Policy.Desired, preview.ChangedSettings))))
+                    Normalizer.ToStableJson(Movewise.Core.Compare.TenantComparer.Pruned(SettingsDiff.Only(current, preview.ChangedSettings))),
+                    Readable(Normalizer.ToStableJson(Movewise.Core.Compare.TenantComparer.Pruned(SettingsDiff.Only(preview.Policy.Desired, preview.ChangedSettings)))))
                 : LineDiff.Compare(Normalizer.ToStableJson(preview.Source.Settings), Readable(Normalizer.ToStableJson(preview.Policy.Desired)));
             var near = new bool[lines.Count];
             for (var i = 0; i < lines.Count; i++)
@@ -359,7 +360,10 @@
 
     // Settings that exist in every tenant are changed, not created.
     static string OutcomeText(PolicyResult policy) =>
-        policy.Outcome == Outcome.Create && policy.Source.Type.IsSettings ? "Change" : OutcomeText(policy.Outcome);
+        policy.Outcome != Outcome.Create ? OutcomeText(policy.Outcome)
+        : policy.UpdatesId is not null ? "Update"
+        : policy.Source.Type.IsSettings ? "Change"
+        : OutcomeText(policy.Outcome);
 
     static string OutcomeText(Outcome outcome) => outcome switch
     {

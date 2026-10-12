@@ -2,6 +2,7 @@
 @inject MigrationState State
 @inject MigrationService Migration
 @inject UpdateService Updates
+@inject NavigationManager Navigation
 @implements IDisposable
 
 <div class="app">
@@ -13,7 +14,12 @@
             <span>Movewise</span>
         </div>
         <nav class="nav" aria-label="Main">
-            <NavLink href="" Match="NavLinkMatch.Prefix" ActiveClass="on">Migration</NavLink>
+            @* Every migration step lives at the root ("", discover, map…); the other screens have their own routes. *@
+            <a href="" class="@(InMigration ? "on" : "")">Migrations</a>
+            <a href="compare" class="@(SectionOf("compare") ? "on" : "")">Compare</a>
+            <a href="snapshots" class="@(SectionOf("snapshots") ? "on" : "")">Snapshots</a>
+            <a href="baselines" class="@(SectionOf("baselines") ? "on" : "")">Baselines</a>
+            <a href="drift" class="@(SectionOf("drift") ? "on" : "")">Drift monitor</a>
         </nav>
         <div class="sidebar-foot">
             <div class="side-tenant">
@@ -51,6 +57,7 @@
     {
         State.Changed += OnStateChanged;
         Updates.Changed += OnStateChanged;
+        Navigation.LocationChanged += OnLocationChanged;
     }
 
     async Task UpdateAsync()
@@ -83,11 +90,26 @@
         }
     }
 
+    // Compare has its own entry, and is also reached from Snapshots, Drift and the end of a deployment.
+    static readonly string[] OutsideMigration = ["snapshots", "compare", "baselines", "drift"];
+
+    bool SectionOf(params string[] sections)
+    {
+        var first = Navigation.ToBaseRelativePath(Navigation.Uri).Split('/', 2)[0];
+        return sections.Contains(first, StringComparer.OrdinalIgnoreCase);
+    }
+
+    // Migration steps live at the root, so "Migrations" is on everywhere the other sections aren't.
+    bool InMigration => !SectionOf(OutsideMigration);
+
+    void OnLocationChanged(object? sender, Microsoft.AspNetCore.Components.Routing.LocationChangedEventArgs e) => InvokeAsync(StateHasChanged);
+
     void OnStateChanged() => InvokeAsync(StateHasChanged);
 
     public void Dispose()
     {
         State.Changed -= OnStateChanged;
         Updates.Changed -= OnStateChanged;
+        Navigation.LocationChanged -= OnLocationChanged;
     }
 }

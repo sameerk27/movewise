@@ -78,6 +78,7 @@ public class EntraExtrasTests
         }
 
         public Task PatchAsync(string path, JsonNode body, CancellationToken ct = default) => inner.PatchAsync(path, body, ct);
+        public Task PutAsync(string path, JsonNode body, CancellationToken ct = default) => inner.PutAsync(path, body, ct);
         public Task DeleteAsync(string path, CancellationToken ct = default) => inner.DeleteAsync(path, ct);
         public Task<JsonObject> GetObjectAsync(string path, CancellationToken ct = default) => inner.GetObjectAsync(path, ct);
         public Task<IReadOnlyList<JsonObject>> GetCollectionAsync(string path, CancellationToken ct = default) => inner.GetCollectionAsync(path, ct);

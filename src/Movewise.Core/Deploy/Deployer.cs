@@ -31,17 +31,21 @@ public static class Deployer
         if (run.RolledBack is not null)
             throw new InvalidOperationException("This run was rolled back. Start a new deployment instead.");
 
+        // Updating a PowerShell policy reads its whole type (cmdlets list them all, with their rules). Read once per
+        // run and shared: each step reads its own policy before changing it, so none sees another's change.
+        var reads = new Dictionary<string, Task<ExportResult>>();
         foreach (var step in run.Steps.Where(s => s.IsUnfinished).ToList())
         {
             ct.ThrowIfCancellationRequested();
-            await RunStepAsync(tenant, run, step, save, changed, CancellationToken.None);
+            await RunStepAsync(tenant, run, step, save, changed, reads, CancellationToken.None);
         }
 
         run.Completed = DateTimeOffset.Now;
         await save();
     }
 
-    static async Task RunStepAsync(TenantClients tenant, DeployRun run, DeployStep step, Func<Task> save, Action<DeployStep>? changed, CancellationToken ct)
+    static async Task RunStepAsync(TenantClients tenant, DeployRun run, DeployStep step, Func<Task> save, Action<DeployStep>? changed,
+        Dictionary<string, Task<ExportResult>> reads, CancellationToken ct)
     {
         async Task Update(StepStatus status, string? message = null)
         {
@@ -107,6 +111,67 @@ public static class Deployer
 
                 await SetSettingsAsync(tenant, type, step, step.DestinationId!, values, ct);
                 await Update(StepStatus.Done, $"Changed: {string.Join(", ", values.Select(p => p.Key))}.");
+                return;
+            }
+
+            // A policy already in the destination, changed to match rather than created.
+            if (step.UpdateOf is { } existingId)
+            {
+                var type = ResourceRegistry.Get(step.TargetType);
+                var values = (JsonObject)step.Body.DeepClone();
+                var missing = Resolve(values, run);
+                if (missing.Count > 0)
+                {
+                    await Skip(missing);
+                    return;
+                }
+
+                if (type.UsesPowerShell)
+                {
+                    var shell = tenant.PowerShellFor(type);
+                    if (step.Previous is null)
+                    {
+                        var current = await ReadPowerShellForUpdateAsync(tenant, type, existingId, reads, ct);
+                        step.Previous = SettingsDiff.Only(current, values.Select(p => p.Key).Concat(step.Rules is null ? [] : ["rules"]));
+                        step.DestinationId = existingId;
+                    }
+                    await Update(StepStatus.Creating);
+
+                    await SetWithPowerShellAsync(shell, type.Cmdlets!.Set!, existingId, values, step, null, ct);
+                    await Update(StepStatus.Created);
+                    var ruleFailure = step.Rules is { } desiredRules
+                        ? await UpdateRulesAsync(shell, type, step, existingId, ResolvedRules(desiredRules, run), save, ct)
+                        : null;
+                    var settingsChanged = values.Select(p => p.Key).Concat(step.Rules is null ? [] : ["rules"]);
+                    if (ruleFailure is null)
+                        await Update(StepStatus.Done, $"Updated: {string.Join(", ", settingsChanged)}.");
+                    else
+                        await Update(StepStatus.Failed, ruleFailure);
+                    return;
+                }
+
+                // What the policy is now is kept before anything changes, so rolling back can put it back. A retry
+                // keeps the first copy: by then the policy may already have been changed.
+                var graph = tenant.WriterFor(type);
+                if (step.Previous is null)
+                {
+                    var current = await ReadForUpdateAsync(graph, type, existingId, step.Assignments is not null, ct);
+                    step.Previous = type.UpdateWith == UpdateMethod.Put
+                        ? current
+                        : SettingsDiff.Only(current, values.Select(p => p.Key).Where(k => k != "@odata.type")
+                            .Concat(step.Assignments is null ? [] : ["assignments"]));
+                    step.DestinationId = existingId;
+                }
+                await Update(StepStatus.Creating);
+
+                await SendUpdateAsync(graph, type, existingId, values, ct);
+                await Update(StepStatus.Created);
+                var updated = values.Select(p => p.Key).Where(k => k != "@odata.type").Concat(step.Assignments is null ? [] : ["assignments"]).ToList();
+                var afterFailure = await AfterCreateAsync(tenant, run, step, isRetry, save, ct);
+                if (afterFailure is null)
+                    await Update(StepStatus.Done, $"Updated: {string.Join(", ", updated)}.");
+                else
+                    await Update(StepStatus.Failed, afterFailure.Replace("Created, but", "Updated, but", StringComparison.Ordinal));
                 return;
             }
 
@@ -178,9 +243,12 @@ public static class Deployer
         }
         catch (Exception ex)
         {
-            await Update(StepStatus.Failed, step.DestinationId is null
-                ? ex.Message
-                : $"Created, but something after that failed: {ex.Message}");
+            // An update records the existing policy's ID before sending anything, so the status says whether it changed.
+            await Update(StepStatus.Failed, step.UpdateOf is not null
+                ? step.Status == StepStatus.Created ? $"Updated, but something after that failed: {ex.Message}" : $"Not updated: {ex.Message}"
+                : step.DestinationId is null
+                    ? ex.Message
+                    : $"Created, but something after that failed: {ex.Message}");
         }
     }
 
@@ -204,7 +272,7 @@ public static class Deployer
         if (body[SensitivityLabels.NotCopied] is JsonArray known)
             notCopied.AddRange(known.Select(n => n?.ToString()).OfType<string>());
         // What a Set cmdlet takes afterwards isn't lost, even though New doesn't take it.
-        if (type.Cmdlets.Set is { } set)
+        if (type.Cmdlets is { SetAfterCreate: true, Set: { } set })
         {
             var later = await shell.ParametersOfAsync(set, ct);
             notCopied.RemoveAll(later.Contains);
@@ -222,6 +290,189 @@ public static class Deployer
             ? id
             : step.DisplayName;
     }
+
+    /// <summary>
+    /// An existing policy as it is now, in the same shape as when it was read for migrating: what an update is
+    /// compared with, and what rolling back puts back. With its assignments when the update replaces them.
+    /// </summary>
+    static async Task<JsonObject> ReadForUpdateAsync(IGraphReader graph, ResourceType type, string id, bool withAssignments, CancellationToken ct)
+    {
+        var raw = await graph.GetObjectAsync(type.ItemPath is { } itemPath ? Expand(itemPath, id) : ItemPath(type, id), ct);
+        var current = Normalizer.Normalize(raw, type);
+        if (withAssignments && type.AssignmentsPath is { } assignmentsPath)
+        {
+            current["assignments"] = new JsonArray((await graph.GetCollectionAsync(Expand(assignmentsPath, id), ct))
+                .Select(a =>
+                {
+                    var assignment = (JsonObject)Normalizer.Canonicalize(a)!;
+                    assignment.Remove("id");
+                    assignment.Remove("sourceId");
+                    return (JsonNode)assignment;
+                }).ToArray());
+        }
+        return current;
+    }
+
+    /// <summary>An existing PowerShell policy as read for migrating, with its rules: what an update changes, and rollback puts back.</summary>
+    static async Task<JsonObject> ReadPowerShellForUpdateAsync(TenantClients tenant, ResourceType type, string id,
+        Dictionary<string, Task<ExportResult>> reads, CancellationToken ct)
+    {
+        if (!reads.TryGetValue(type.Id, out var read) || read.IsFaulted || read.IsCanceled)
+            reads[type.Id] = read = Exporter.ExportAsync(tenant, [type], null, ct);
+        var result = await read;
+        if (result.Warnings.FirstOrDefault() is { } warning)
+        {
+            // Perhaps throttled: the next step reads it again rather than failing on this answer too.
+            reads.Remove(type.Id);
+            throw new InvalidOperationException(warning.Message);
+        }
+        return result.Items.FirstOrDefault(i => string.Equals(i.SourceId, id, StringComparison.OrdinalIgnoreCase))?.Settings
+            ?? throw new InvalidOperationException("It's no longer in the destination.");
+    }
+
+    /// <summary>
+    /// Runs a Set cmdlet with the values it takes. An empty value clears the setting, which is how rollback empties a
+    /// list again. Nothing is run when there's nothing to set.
+    /// </summary>
+    static async Task SetWithPowerShellAsync(IPowerShell shell, string cmdlet, string identity, JsonObject values, DeployStep step, string? rule, CancellationToken ct)
+    {
+        var takes = await shell.ParametersOfAsync(cmdlet, ct);
+        var (parameters, notCopied) = PowerShellShape.ToParameters(values, takes);
+        foreach (var (name, value) in values)
+        {
+            if (!parameters.ContainsKey(name) && takes.Contains(name) && IsEmptyValue(value))
+                parameters[name] = null;
+        }
+        // Set would rename it, or move a rule to another policy.
+        foreach (var name in new[] { "Name", "Identity" })
+            parameters.Remove(name);
+        NoteNotCopied(step, notCopied, rule);
+        if (parameters.Count == 0)
+            return;
+        parameters["Identity"] = identity;
+        await shell.InvokeAsync(cmdlet, parameters, ct);
+    }
+
+    static bool IsEmptyValue(JsonNode? value) =>
+        value is null || value is JsonArray { Count: 0 } || value is JsonValue v && v.TryGetValue<string>(out var s) && s.Length == 0;
+
+    /// <summary>The desired rules, with the IDs of objects this run created filled in.</summary>
+    static JsonArray ResolvedRules(JsonArray rules, DeployRun run)
+    {
+        var copy = (JsonArray)rules.DeepClone();
+        Resolve(copy, run);
+        return copy;
+    }
+
+    /// <summary>
+    /// A policy's rules, updated with it: each rule the destination has by name is changed with the rule Set cmdlet,
+    /// and each it lacks is created. Rules only the destination has are left alone. Each is recorded when done
+    /// ("set:" before the name for a changed one), so a retry does only the rest and rollback knows what to undo.
+    /// </summary>
+    /// <param name="policyId">The existing policy's identity. Its name may differ from the source's, and an update never renames it.</param>
+    static async Task<string?> UpdateRulesAsync(IPowerShell shell, ResourceType type, DeployStep step, string policyId, JsonArray rules, Func<Task> save, CancellationToken ct)
+    {
+        var cmdlets = type.Rules!;
+        var existing = (step.Previous?["rules"] as JsonArray ?? [])
+            .OfType<JsonObject>()
+            .Select(r => r["Name"]?.GetValue<string>())
+            .OfType<string>()
+            .ToHashSet(StringComparer.OrdinalIgnoreCase);
+        var newTakes = await shell.ParametersOfAsync(cmdlets.New, ct);
+
+        foreach (var rule in rules.OfType<JsonObject>())
+        {
+            var name = rule["Name"]?.GetValue<string>() ?? step.DisplayName;
+            try
+            {
+                if (existing.Contains(name))
+                {
+                    if (step.CreatedRules.Contains("set:" + name, StringComparer.OrdinalIgnoreCase) || cmdlets.Set is null)
+                        continue;
+                    var values = (JsonObject)rule.DeepClone();
+                    values.Remove(cmdlets.PolicyProperty);
+                    values.Remove(cmdlets.PolicyParameter);
+                    await SetWithPowerShellAsync(shell, cmdlets.Set, name, values, step, name, ct);
+                    step.CreatedRules.Add("set:" + name);
+                }
+                else
+                {
+                    if (step.CreatedRules.Contains(name, StringComparer.OrdinalIgnoreCase))
+                        continue;
+                    var (parameters, notCopied) = PowerShellShape.ToParameters(rule, newTakes);
+                    parameters["Name"] = name;
+                    parameters[cmdlets.PolicyParameter] = policyId;
+                    NoteNotCopied(step, notCopied, name);
+                    await shell.InvokeAsync(cmdlets.New, parameters, ct);
+                    step.CreatedRules.Add(name);
+                }
+            }
+            catch (Exception ex) when (ex is not OperationCanceledException)
+            {
+                return $"Updated, but its rule \"{name}\" couldn't be {(existing.Contains(name) ? "changed" : "created")}: {ex.Message}";
+            }
+            await save();
+        }
+        return null;
+    }
+
+    /// <summary>
+    /// Undoes a PowerShell policy's update: its settings set back, rules it changed set back, and rules it created
+    /// removed. Each rule is struck off once done, so a retried rollback does only the rest.
+    /// </summary>
+    static async Task PutBackWithPowerShellAsync(IPowerShell shell, ResourceType type, DeployStep step, string id, Func<Task> save, CancellationToken ct)
+    {
+        var previous = (JsonObject)step.Previous!.DeepClone();
+        var previousRules = previous["rules"] as JsonArray ?? [];
+        previous.Remove("rules");
+        await SetWithPowerShellAsync(shell, type.Cmdlets!.Set!, id, previous, step, null, ct);
+
+        if (type.Rules is not { } cmdlets)
+            return;
+        foreach (var entry in step.CreatedRules.ToList())
+        {
+            if (entry.StartsWith("set:", StringComparison.OrdinalIgnoreCase))
+            {
+                var name = entry[4..];
+                if (cmdlets.Set is not null
+                    && previousRules.OfType<JsonObject>().FirstOrDefault(r => string.Equals(r["Name"]?.GetValue<string>(), name, StringComparison.OrdinalIgnoreCase)) is { } was)
+                {
+                    var values = (JsonObject)was.DeepClone();
+                    values.Remove(cmdlets.PolicyProperty);
+                    values.Remove(cmdlets.PolicyParameter);
+                    await SetWithPowerShellAsync(shell, cmdlets.Set, name, values, step, name, ct);
+                }
+            }
+            else
+            {
+                try
+                {
+                    await shell.InvokeAsync(cmdlets.Remove, await RemoveParametersAsync(shell, cmdlets.Remove, entry, ct), ct);
+                }
+                catch (PowerShellException ex) when (ex.IsNotFound)
+                {
+                }
+            }
+            step.CreatedRules.Remove(entry);
+            await save();
+        }
+    }
+
+    /// <summary>Changes an existing policy: PUT with the whole policy, or PATCH with what differs.</summary>
+    static async Task SendUpdateAsync(IGraphWriter graph, ResourceType type, string id, JsonObject values, CancellationToken ct)
+    {
+        if (type.UpdateWith == UpdateMethod.Put)
+        {
+            type.PrepareForCreate?.Invoke(values);
+            await graph.PutAsync(ItemPath(type, id), values, ct);
+        }
+        else if (values.Any(p => p.Key != "@odata.type"))
+        {
+            await graph.PatchAsync(ItemPath(type, id), values, ct);
+        }
+    }
+
+    static string ItemPath(ResourceType type, string id) => $"{type.CreatePath}/{Uri.EscapeDataString(id)}";
 
     /// <summary>
     /// Changes existing settings to the given values: with PATCH in Graph, or through Set, and through the Enable or
@@ -311,7 +562,7 @@ public static class Deployer
             return null;
         var type = ResourceRegistry.Get(step.TargetType);
 
-        if (type.Cmdlets?.Set is not null && await SetAfterCreateAsync(tenant.PowerShellFor(type), type, run, step, ct) is { } setFailure)
+        if (type.Cmdlets?.SetAfterCreate == true && await SetAfterCreateAsync(tenant.PowerShellFor(type), type, run, step, ct) is { } setFailure)
             return setFailure;
         if (type.Rules is not null && step.Rules is { Count: > 0 })
             return await CreateRulesAsync(tenant.PowerShellFor(type), type, step, isRetry, save, ct);
@@ -527,6 +778,45 @@ public static class Deployer
                 {
                     step.Status = StepStatus.RollbackFailed;
                     step.Message = $"Couldn't put the settings back: {ex.Message}";
+                }
+                await save();
+                changed?.Invoke(step);
+                continue;
+            }
+
+            // A policy that was updated rather than created: it was there before, so it's put back, not deleted.
+            if (step.UpdateOf is { } updatedId)
+            {
+                if (step.Previous is null || step.Status is StepStatus.Pending or StepStatus.Skipped or StepStatus.RolledBack)
+                    continue;
+                try
+                {
+                    var type = ResourceRegistry.Get(step.TargetType);
+                    if (type.UsesPowerShell)
+                    {
+                        await PutBackWithPowerShellAsync(tenant.PowerShellFor(type), type, step, updatedId, save, inFlight);
+                        step.Status = StepStatus.RolledBack;
+                        step.Message = "Put back as it was.";
+                        await save();
+                        changed?.Invoke(step);
+                        continue;
+                    }
+                    var graph = tenant.WriterFor(type);
+                    var previous = (JsonObject)step.Previous.DeepClone();
+                    var assignments = previous["assignments"] as JsonArray;
+                    previous.Remove("assignments");
+                    if (type.UpdateWith == UpdateMethod.Patch && step.Body["@odata.type"] is { } odataType)
+                        previous["@odata.type"] = odataType.DeepClone();
+                    await SendUpdateAsync(graph, type, updatedId, previous, inFlight);
+                    if (assignments is not null && type.AssignPath is { } assignPath)
+                        await graph.PostAsync(Expand(assignPath, updatedId), new JsonObject { [type.AssignBodyProperty] = assignments.DeepClone() }, inFlight);
+                    step.Status = StepStatus.RolledBack;
+                    step.Message = "Put back as it was.";
+                }
+                catch (Exception ex) when (ex is not OperationCanceledException)
+                {
+                    step.Status = StepStatus.RollbackFailed;
+                    step.Message = $"Couldn't put it back as it was: {ex.Message}";
                 }
                 await save();
                 changed?.Invoke(step);

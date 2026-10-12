@@ -65,7 +65,10 @@ p { margin: 0; }
 .page-head { padding: 20px 32px 18px; display: flex; flex-direction: column; gap: 16px; background: var(--surface); border-bottom: 1px solid var(--line); }
 .head-row { display: flex; justify-content: space-between; align-items: flex-end; gap: 24px; }
 .head-text { display: flex; flex-direction: column; gap: 4px; }
-.head-actions { display: flex; gap: 10px; }
+.head-actions { display: flex; gap: 10px; flex-wrap: wrap; }
+/* In a page header the buttons stay on one line; the title and its description wrap instead. */
+.page-head .head-text { flex: 1 1 auto; min-width: 0; }
+.page-head .head-actions { flex-wrap: nowrap; flex-shrink: 0; }
 .content { flex-grow: 1; overflow-y: auto; padding: 20px 32px; display: flex; flex-direction: column; gap: 16px; }
 /* Cards keep their full height; the content area scrolls instead of squashing them. */
 .content > * { flex-shrink: 0; }
@@ -291,3 +294,49 @@ input[type=checkbox] { width: 16px; height: 16px; margin: 0; accent-color: var(-
 /* Pre-flight: leave blocked policies out */
 .skip-blocked label { display: flex; gap: 10px; align-items: flex-start; cursor: pointer; }
 .skip-blocked input { margin-top: 3px; }
+
+/* Compare */
+.compare-modes { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 12px; }
+.compare-modes label { display: flex; gap: 10px; align-items: flex-start; padding: 12px; border: 1px solid var(--line, #E3E4E8); border-radius: 10px; cursor: pointer; }
+.compare-modes label.on { border-color: var(--accent, #2F5BD3); }
+.compare-modes input { margin-top: 3px; }
+.compare-services { display: flex; flex-wrap: wrap; gap: 6px 18px; border: 0; padding: 0; margin: 0; }
+.compare-services legend { width: 100%; margin-bottom: 4px; }
+.compare-services label { display: inline-flex; gap: 6px; align-items: center; cursor: pointer; }
+.compare-snapshot-row { flex-wrap: wrap; justify-content: flex-start; }
+.compare-snapshot-row select { min-width: 280px; flex: 1; }
+.compare-table .row { grid-template-columns: minmax(0, 1.4fr) minmax(0, 1fr) minmax(max-content, 0.9fr) minmax(0, 1.2fr); min-height: 48px; }
+@media (max-width: 1200px) { .compare-modes { grid-template-columns: 1fr; } }
+.restore-list { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 6px; max-height: 260px; overflow-y: auto; }
+.restore-list label { display: flex; gap: 8px; align-items: flex-start; cursor: pointer; }
+.restore-list input { margin-top: 3px; }
+.restore > label.small { display: flex; gap: 8px; align-items: flex-start; }
+
+/* Snapshots */
+.snapshot-table .row { grid-template-columns: minmax(0, 1.6fr) minmax(0, 1.2fr) minmax(max-content, .7fr) minmax(max-content, 1fr); min-height: 52px; }
+.snapshot-filter { display: flex; flex-wrap: wrap; gap: 6px; padding: 14px 16px; border-bottom: 1px solid var(--line); }
+.snapshot-filter .chip { font: inherit; font-size: 13px; height: 34px; padding: 0 14px; border-radius: 999px; border: 1px solid #D4D1C8; background: var(--surface); color: var(--ink); cursor: pointer; }
+.snapshot-filter .chip.on { background: var(--ink); border-color: var(--ink); color: #FFFFFF; font-weight: 600; }
+
+/* Baselines */
+button.card { font: inherit; text-align: left; color: inherit; width: 100%; cursor: pointer; }
+button.card:hover { border-color: #C9C6BD; }
+.baseline-on { border-color: var(--accent); background: var(--accent-soft); }
+button.card.baseline-on, button.card.baseline-on:hover { border: 1.5px solid var(--accent); }
+.baseline-table .row { grid-template-columns: minmax(0, 2fr) minmax(0, 1.3fr) minmax(0, 1.6fr); }
+.baseline-table .row > span:first-child { padding-left: 16px; }
+
+/* Drift monitor */
+.drift-table .row { grid-template-columns: minmax(max-content, 1.5fr) minmax(0, 2.2fr) minmax(0, 1.4fr) minmax(0, 1.1fr); min-height: 52px; }
+
+/* Connect: choosing services */
+label.service { flex-direction: row; gap: 10px; cursor: pointer; }
+label.service > input { margin-top: 3px; flex-shrink: 0; }
+label.service > .stack { gap: 4px; }
+
+/* Connect: saved baselines */
+.baseline-list { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 10px; }
+.baseline-list li { display: flex; align-items: center; justify-content: space-between; gap: 16px; }
+
+/* The accent focus ring is nearly invisible on the dark sidebar. */
+.sidebar :focus-visible { outline-color: #8FB3F0; }

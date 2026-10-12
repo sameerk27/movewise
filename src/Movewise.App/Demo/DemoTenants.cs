@@ -337,7 +337,7 @@ static class DemoTenants
         .Add("v1.0/policies/authenticationStrengthPolicies")
         .Add("v1.0/identity/conditionalAccess/policies", J("""
             { "id": "f1", "displayName": "CA002 - Block legacy authentication", "state": "enabled",
-              "conditions": { "clientAppTypes": ["exchangeActiveSync", "other"], "users": { "includeUsers": ["All"] }, "applications": { "includeApplications": ["All"] } },
+              "conditions": { "clientAppTypes": ["exchangeActiveSync"], "users": { "includeUsers": ["All"] }, "applications": { "includeApplications": ["All"] } },
               "grantControls": { "operator": "OR", "builtInControls": ["block"] } }
             """))
         .Add("beta/deviceManagement/roleScopeTags", J("""{ "id": "0", "displayName": "Default", "isBuiltIn": true }"""))
@@ -352,6 +352,7 @@ static class DemoTenants
     static DemoPowerShell DestinationExchange() => new DemoPowerShell(readOnly: false)
         .Add("OrganizationConfig", J("""{ "DisplayName": "Fabrikam", "Name": "fabrikam.onmicrosoft.com" }"""))
         .Add("AntiPhishPolicy", J("""{ "Name": "Office365 AntiPhish Default", "Guid": "f-e1", "IsDefault": true }"""))
+        .Add("TransportRule", J("""{ "Name": "Block executable attachments", "Identity": "Block executable attachments", "Guid": "f-tr1", "Mode": "Enforce", "State": "Enabled", "AttachmentExtensionMatchesWords": ["exe"], "RejectMessageReasonText": "Executables are blocked." }"""))
         .Add("MobileDeviceMailboxPolicy", J("""{ "Name": "Default", "Guid": "f-e2", "IsDefault": true }"""))
         .Add("QuarantinePolicy", J("""{ "Name": "AdminOnlyAccessPolicy", "Guid": "f-q1", "EndUserQuarantinePermissionsValue": 0 }"""))
         .Add("QuarantinePolicy", J("""{ "Name": "DefaultGlobalTag", "Identity": "DefaultGlobalTag", "Guid": "f-q2", "QuarantinePolicyType": "GlobalQuarantinePolicy", "EndUserSpamNotificationFrequency": "3.00:00:00" }"""))

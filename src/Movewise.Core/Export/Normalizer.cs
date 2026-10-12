@@ -10,7 +10,9 @@ namespace Movewise.Core.Export;
 /// </summary>
 public static class Normalizer
 {
-    static readonly JsonSerializerOptions Indented = new() { WriteIndented = true };
+    // Readable as it is: an apostrophe in a policy name stays an apostrophe, not '. The text is shown on screen
+    // (where Blazor escapes it) and saved as UTF-8, never put into HTML or script as it is.
+    static readonly JsonSerializerOptions Indented = new() { WriteIndented = true, Encoder = System.Text.Encodings.Web.JavaScriptEncoder.UnsafeRelaxedJsonEscaping };
 
     public static JsonObject Normalize(JsonObject raw, ResourceType type)
     {

@@ -179,7 +179,7 @@
                 }
             </section>
 
-            @if (Run.Completed is not null && Run.RolledBack is null && !Migration.IsBusy)
+            @if (Run.Completed is not null && Run.RolledBack is null && !PartlyRolledBack && !Migration.IsBusy)
             {
                 <section class="card">
                     <h2>After deploying</h2>
@@ -228,6 +228,10 @@
             }
             else
             {
+                @if (Run.RolledBack is null && !PartlyRolledBack && Run.RemainingCount == 0)
+                {
+                    <a class="btn primary" href="compare">Compare tenants</a>
+                }
                 <button class="btn ghost" @onclick="Close">@(Run.RolledBack is null && Run.RemainingCount > 0 ? "Close run" : "New deployment")</button>
                 @if (Run.CanRollBack && !confirmRollback)
                 {
@@ -261,14 +265,19 @@
         .Select(s => s.DisplayName)
         .ToList() ?? [];
 
+    // A rollback that was stopped or failed partway: some of the run is gone, so it isn't "Deployed".
+    bool PartlyRolledBack => Run!.RolledBack is null && Run.Steps.Any(s => s.Status is StepStatus.RolledBack or StepStatus.RollbackFailed);
+
     string RunText => Migration.IsBusy ? "Running"
         : Run!.RolledBack is not null ? "Rolled back"
+        : PartlyRolledBack ? "Partly rolled back"
         : Run.FailedCount > 0 ? $"{Run.FailedCount} failed"
         : Run.RemainingCount > 0 ? "Not finished"
         : "Deployed";
 
     string RunClass => Migration.IsBusy ? "info"
         : Run!.RolledBack is not null ? "neutral"
+        : PartlyRolledBack ? "warn"
         : Run.FailedCount > 0 ? "bad"
         : Run.RemainingCount > 0 ? "warn"
         : "ok";
@@ -333,22 +342,27 @@
         finally
         {
             stopping = false;
+            // A comparison from before the run no longer matches the destination, so Compare starts from nothing.
+            State.SetComparison(null);
         }
     }
 
-    // Settings that exist in every tenant are changed, not created, and rolling back puts them back rather than deleting.
-    int SettingsChanged => Run?.Steps.Count(s => s.IsSettings && s.ExistsInDestination) ?? 0;
+    // Settings, and policies that were already there, are changed rather than created, and rolling back puts them back
+    // rather than deleting them.
+    int SettingsChanged => Run?.Steps.Count(s => s.IsChange && s.ExistsInDestination) ?? 0;
 
     string DoneSummary
     {
         get
         {
-            var changed = Run!.Steps.Count(s => s.IsSettings && s.Status == StepStatus.Done);
-            var created = Run.DoneCount - changed;
+            var settings = Run!.Steps.Count(s => s.IsSettings && s.Status == StepStatus.Done);
+            var updated = Run.Steps.Count(s => s.UpdateOf is not null && s.Status == StepStatus.Done);
+            var created = Run.DoneCount - settings - updated;
             var parts = new List<string>();
-            if (created > 0 || changed == 0) parts.Add($"{created} object{(created == 1 ? "" : "s")} created");
-            if (changed > 0) parts.Add($"{changed} setting{(changed == 1 ? "" : "s")} changed");
-            return string.Join(" and ", parts);
+            if (created > 0 || settings + updated == 0) parts.Add($"{created} object{(created == 1 ? "" : "s")} created");
+            if (updated > 0) parts.Add($"{updated} existing polic{(updated == 1 ? "y" : "ies")} updated");
+            if (settings > 0) parts.Add($"{settings} setting{(settings == 1 ? "" : "s")} changed");
+            return parts.Count > 1 ? string.Join(", ", parts.SkipLast(1)) + " and " + parts[^1] : parts[0];
         }
     }
 
@@ -359,7 +373,7 @@
             var created = Run!.CreatedInDestination - SettingsChanged;
             var question = $"Delete the {created} object{(created == 1 ? "" : "s")} this run created in {Run.DestinationName}";
             return SettingsChanged > 0
-                ? $"{question}, and put back the {SettingsChanged} setting{(SettingsChanged == 1 ? "" : "s")} it changed?"
+                ? $"{question}, and put back the {SettingsChanged} setting{(SettingsChanged == 1 ? "" : "s")} and polic{(SettingsChanged == 1 ? "y" : "ies")} it changed?"
                 : question + "?";
         }
     }
@@ -374,7 +388,7 @@
         {
             await Migration.RollbackAsync();
             message = Run!.RolledBack is not null
-                ? $"Rolled back. Everything this run created in {Run.DestinationName} has been deleted{(restoring > 0 ? ", and the settings it changed are back as they were" : "")}."
+                ? $"Rolled back. Everything this run created in {Run.DestinationName} has been deleted{(restoring > 0 ? ", and what it changed is back as it was" : "")}."
                 : null;
             if (Run.RolledBack is null)
                 error = "Some objects couldn't be deleted. They're marked below; try again, or delete them in the admin center.";
@@ -390,6 +404,7 @@
         finally
         {
             stopping = false;
+            State.SetComparison(null);
         }
     }
 
@@ -471,7 +486,13 @@
         _ => "neutral",
     };
 
-    void OnStateChanged() => InvokeAsync(StateHasChanged);
+    void OnStateChanged() => InvokeAsync(() =>
+    {
+        // A run started from an earlier visit to this screen ends without passing through this page's finally.
+        if (!Migration.IsBusy)
+            stopping = false;
+        StateHasChanged();
+    });
 
     public void Dispose() => State.Changed -= OnStateChanged;
 }

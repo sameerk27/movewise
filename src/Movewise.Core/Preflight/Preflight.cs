@@ -11,7 +11,14 @@ namespace Movewise.Core.Preflight;
 public enum Severity { Blocker, Warning, Info }
 
 /// <summary>What to do with a policy whose name is already taken in the destination.</summary>
-public enum ConflictChoice { Skip, CreateWithSuffix }
+public enum ConflictChoice
+{
+    Skip,
+    CreateWithSuffix,
+
+    /// <summary>Change the existing policy to match, where its type can be changed (see <see cref="Registry.ResourceType.CanUpdate"/>).</summary>
+    Update,
+}
 
 /// <summary>What to do with risk-based Conditional Access policies when the destination lacks Entra ID P2.</summary>
 public enum LicenseChoice { CreateDisabled, Skip }
@@ -23,6 +30,18 @@ public sealed record PreflightChoices
 
     /// <summary>Deploy the policies that can be created and leave the blocked ones out, instead of fixing every blocker first.</summary>
     public bool SkipBlocked { get; init; }
+
+    /// <summary>
+    /// Create policies as they were, switched on, instead of in report-only or test mode. Only offered when restoring
+    /// a tenant from its own snapshot, where the policies were already in use as they are.
+    /// </summary>
+    public bool KeepOriginalState { get; init; }
+
+    /// <summary>
+    /// Update policies that exist in the destination with the same ID, whatever their name now. Only for restoring a
+    /// tenant from its own snapshot, where a policy renamed since is still the same policy.
+    /// </summary>
+    public bool UpdateById { get; init; }
 }
 
 /// <summary>Which choice a finding lets the admin make on the Pre-flight screen.</summary>
@@ -53,8 +72,11 @@ public sealed record PolicyResult(TransformedPolicy Policy, Outcome Outcome, IRe
     /// <summary>For settings: the destination's values now, which deploying changes.</summary>
     public JsonObject? Current { get; init; }
 
-    /// <summary>For settings: the ones whose value differs in the destination, and so will be changed.</summary>
+    /// <summary>For settings, and policies updated in place: the ones whose value differs in the destination, and so will be changed.</summary>
     public IReadOnlyList<string> ChangedSettings { get; init; } = [];
+
+    /// <summary>For a policy that updates one already in the destination rather than creating it: that policy's ID.</summary>
+    public string? UpdatesId { get; init; }
 
     public ExportedResource Source => Policy.Source;
     public string Key => MappingPlan.KeyOf(Source.Type.Id, Source.SourceId);
@@ -241,6 +263,8 @@ public static partial class PreflightCheck
         progress?.Report("Checking names in the destination…");
         var conflicts = new List<ExportedResource>();
         var ruleConflicts = new HashSet<ExportedResource>();
+        // Policies that change one already in the destination instead of creating a new one.
+        var updates = new List<ExportedResource>();
         var takenNames = new Dictionary<string, HashSet<string>>();
         var takenRuleNames = new Dictionary<string, HashSet<string>>();
         // Policies already blocked (no license, say) can't be created anyway, so their names don't matter.
@@ -275,6 +299,7 @@ public static partial class PreflightCheck
 
             var taken = existing.Select(e => e[type.IdentityProperty]?.GetValue<string>() ?? "").ToHashSet(StringComparer.OrdinalIgnoreCase);
             takenNames[type.Id] = taken;
+            var existingIds = existing.Select(e => e[type.IdProperty]?.ToString()).OfType<string>().ToHashSet(StringComparer.OrdinalIgnoreCase);
 
             var takenRules = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
             if (type.Rules is { } rules)
@@ -300,8 +325,15 @@ public static partial class PreflightCheck
                     // Another policy points at this object and it was matched to one that exists: use that one.
                     useExisting.Add(MappingPlan.KeyOf(type.Id, policy.SourceId));
                 }
+                else if (choices.UpdateById && type.CanUpdate && existingIds.Contains(policy.SourceId))
+                {
+                    // Restoring: the same policy is still there, perhaps renamed. It's put back as it was.
+                    updates.Add(policy);
+                }
                 else if (taken.Contains(policy.DisplayName))
                 {
+                    if (choices.NameConflicts == ConflictChoice.Update && type.CanUpdate)
+                        updates.Add(policy);
                     conflicts.Add(policy);
                 }
                 else if (RuleNames(policy.Settings).Any(takenRules.Contains))
@@ -315,21 +347,124 @@ public static partial class PreflightCheck
         if (conflicts.Count > 0)
         {
             var suffix = choices.NameConflicts == ConflictChoice.CreateWithSuffix;
+            var update = choices.NameConflicts == ConflictChoice.Update;
             findings.Add(new Finding(Severity.Warning,
                 $"Name conflicts · {conflicts.Count} polic{(conflicts.Count == 1 ? "y" : "ies")}",
                 "A policy or rule with the same name already exists in the destination. " +
-                (suffix ? "These will be created with \" (migrated)\" added to the name, and to their rules' names." : "These will be skipped, and the existing ones left alone."),
-                conflicts.Select(p => $"{p.DisplayName} ({p.Type.DisplayName}{(ruleConflicts.Contains(p) ? ", a rule's name is taken" : "")})").ToList()) { Choice = FindingChoice.NameConflicts });
-            foreach (var policy in conflicts)
+                (suffix ? "These will be created with \" (migrated)\" added to the name, and to their rules' names."
+                    : update ? "The existing ones will be changed to match the source. The few kinds that can't be changed in place (authentication strengths, allow/block entries, Defender for Endpoint indicators, custom sensitive information types) are skipped."
+                    : "These will be skipped, and the existing ones left alone."),
+                conflicts.Select(p => $"{p.DisplayName} ({p.Type.DisplayName}{(ruleConflicts.Contains(p) ? ", a rule's name is taken" : "")}" +
+                    $"{(update ? updates.Contains(p) ? ", updated" : ", can't be updated: skipped" : "")})").ToList()) { Choice = FindingChoice.NameConflicts });
+            foreach (var policy in conflicts.Where(p => !updates.Contains(p)))
             {
                 if (suffix) rename.Add(MappingPlan.KeyOf(policy.Type.Id, policy.SourceId));
-                else Add(skipped, policy, "The name is taken in the destination.");
+                else Add(skipped, policy, update ? "The name is taken in the destination, and this type can't be changed in place yet." : "The name is taken in the destination.");
             }
         }
 
         // 5. Build every policy as it will be created, and look at the result.
-        var options = new TransformOptions { Disable = disable, Rename = rename };
+        var options = new TransformOptions
+        {
+            Disable = disable,
+            Rename = rename,
+            ConditionalAccessReportOnly = !choices.KeepOriginalState,
+            MakeSafe = !choices.KeepOriginalState,
+        };
         var transformed = selected.Select(p => Transformer.Transform(p, plan, options)).ToList();
+
+        // Policies that update one already in the destination: compared with it, and only what differs is changed.
+        // An existing policy is in use, so it isn't moved to report-only or test mode; it takes the source's state.
+        var updateChanges = new Dictionary<string, (string Id, JsonObject Current, IReadOnlyList<string> Changed)>();
+        var updatedPolicies = new List<string>();
+        var asTheyAre = options with { ConditionalAccessReportOnly = false, MakeSafe = false };
+        foreach (var group in updates.GroupBy(p => p.Type))
+        {
+            var type = group.Key;
+            ExportResult inDestination;
+            try
+            {
+                inDestination = await Exporter.ExportAsync(tenant, [type], null, ct);
+                if (inDestination.Warnings.FirstOrDefault() is { } warning)
+                    throw new InvalidOperationException(warning.Message);
+            }
+            catch (Exception ex) when (ex is not OperationCanceledException)
+            {
+                // Without the destination's policy there's nothing to compare with, or to put back on rollback.
+                findings.Add(new Finding(Severity.Blocker, $"Couldn't read {type.PluralName.ToLowerInvariant()} in the destination to update them", ex.Message,
+                    group.Select(p => p.DisplayName).ToList()));
+                foreach (var policy in group)
+                    Add(blocked, policy, "Couldn't read the destination's policy to update it.");
+                continue;
+            }
+
+            IReadOnlySet<string>? setTakes = null;
+            foreach (var policy in group)
+            {
+                var existing = (choices.UpdateById ? inDestination.Items.FirstOrDefault(d => string.Equals(d.SourceId, policy.SourceId, StringComparison.OrdinalIgnoreCase)) : null)
+                    ?? inDestination.Items.FirstOrDefault(d => string.Equals(d.DisplayName, policy.DisplayName, StringComparison.OrdinalIgnoreCase));
+                if (existing is null)
+                {
+                    // It was found when names were checked, so creating it would make a second one (or fail on the name).
+                    Add(blocked, policy, "It's in the destination, but Movewise couldn't read that policy to update it. Run pre-flight again, or change it in the admin center.");
+                    continue;
+                }
+
+                var key = MappingPlan.KeyOf(type.Id, policy.SourceId);
+                var index = transformed.FindIndex(t => t.Source == policy);
+                transformed[index] = Transformer.Transform(policy, plan, asTheyAre);
+                var changed = Compare.TenantComparer.Changes(type, transformed[index].Desired, existing.Settings)
+                    .Where(k => !type.NotUpdatable.Contains(k, StringComparer.OrdinalIgnoreCase) && k != type.Children?.Property)
+                    // Rule order isn't copied: a priority has to fit among the destination's own rules.
+                    .Where(k => !k.Equals("Priority", StringComparison.OrdinalIgnoreCase))
+                    .ToList();
+                // An update changes and adds rules but never deletes any, so rules differ only when one of the
+                // source's is missing from the destination, or set differently there.
+                if (changed.Contains("rules") && type.Rules is { } ruleCmdlets && !RulesDiffer(type, ruleCmdlets, transformed[index].Desired, existing.Settings))
+                    changed.Remove("rules");
+
+                // A PATCH or a Set cmdlet sends only the settings the source has (an explicit null clears one). A setting
+                // the source doesn't have at all would stay as it is, so it isn't listed as a change.
+                var cantChange = new List<string>();
+                if (type.UpdateWith != UpdateMethod.Put)
+                {
+                    var desired = transformed[index].Desired;
+                    var onlyInDestination = changed
+                        .Where(k => k is not ("rules" or "assignments" or "apps") && !desired.ContainsKey(k))
+                        .ToList();
+                    cantChange.AddRange(onlyInDestination);
+                    changed = changed.Except(onlyInDestination).ToList();
+                }
+
+                // A Set cmdlet changes only what it takes: DLP locations, for one, are added and removed with
+                // parameters of their own, and Teams group assignments aren't policy settings at all.
+                if (type.UsesPowerShell)
+                {
+                    setTakes ??= await tenant.PowerShellFor(type).ParametersOfAsync(type.Cmdlets!.Set!, ct);
+                    var notTaken = changed.Where(k => !setTakes.Contains(k) && !(k == "rules" && type.Rules?.Set is not null)).ToList();
+                    cantChange.AddRange(notTaken);
+                    changed = changed.Except(notTaken).ToList();
+                }
+                if (changed.Count == 0)
+                {
+                    Add(skipped, policy, cantChange.Count == 0
+                        ? "Already the same in the destination."
+                        : $"Differs only in what can't be changed in place ({string.Join(", ", cantChange)}); change that in the admin center.");
+                    continue;
+                }
+                updateChanges[key] = (existing.SourceId, existing.Settings, changed);
+                updatedPolicies.Add($"{policy.DisplayName} ({type.DisplayName}): {string.Join(", ", changed.Take(6))}{(changed.Count > 6 ? $" and {changed.Count - 6} more" : "")}" +
+                    (cantChange.Count > 0 ? $". Can't be changed in place, so left as it is: {string.Join(", ", cantChange)}" : ""));
+            }
+        }
+        if (updatedPolicies.Count > 0)
+        {
+            findings.Add(new Finding(Severity.Warning,
+                "Policies that will be updated in the destination",
+                "These already exist in the destination and are changed to match: only the settings listed, and their assignments are replaced. " +
+                "They stay switched on or off as the source has them, and the change takes effect straight away. Rolling back puts them back as they were.",
+                updatedPolicies));
+        }
 
         // The names a renamed policy and its rules end up with must be free too.
         var stillTaken = new List<string>();
@@ -617,6 +752,8 @@ public static partial class PreflightCheck
                 return new PolicyResult(t, Outcome.Skip, skipReasons);
             if (settingsChanges.TryGetValue(key, out var settings))
                 return new PolicyResult(t, Outcome.Create, []) { Current = settings.Current, ChangedSettings = settings.Changed };
+            if (updateChanges.TryGetValue(key, out var update))
+                return new PolicyResult(t, Outcome.Create, []) { Current = update.Current, ChangedSettings = update.Changed, UpdatesId = update.Id };
             return new PolicyResult(t, Outcome.Create, []);
         }).ToList();
 
@@ -732,6 +869,29 @@ public static partial class PreflightCheck
                         yield return nested;
                 break;
         }
+    }
+
+    /// <summary>True when one of the desired rules is missing from the existing policy, or set differently there.</summary>
+    static bool RulesDiffer(ResourceType type, RuleCmdlets cmdlets, JsonObject desired, JsonObject existing)
+    {
+        var existingRules = (existing["rules"] as JsonArray ?? []).OfType<JsonObject>().ToList();
+        foreach (var rule in (desired["rules"] as JsonArray ?? []).OfType<JsonObject>())
+        {
+            var name = rule["Name"]?.GetValue<string>();
+            var match = existingRules.FirstOrDefault(r => string.Equals(r["Name"]?.GetValue<string>(), name, StringComparison.OrdinalIgnoreCase));
+            if (match is null)
+                return true;
+            var wanted = (JsonObject)rule.DeepClone();
+            var there = (JsonObject)match.DeepClone();
+            foreach (var link in new[] { cmdlets.PolicyProperty, cmdlets.PolicyParameter })
+            {
+                wanted.Remove(link);
+                there.Remove(link);
+            }
+            if (Compare.TenantComparer.Changes(type, wanted, there).Count > 0)
+                return true;
+        }
+        return false;
     }
 
     // Default sensitivity labels are named with a GUID; their display name is the one admins know.

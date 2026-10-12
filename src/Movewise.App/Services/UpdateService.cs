@@ -25,7 +25,14 @@ public sealed class UpdateService(MovewiseOptions options, MigrationService migr
             return;
         try
         {
-            _manager ??= new UpdateManager(options.UpdateUrl);
+            if (options.UpdateUrl.Contains("github.com", StringComparison.OrdinalIgnoreCase))
+            {
+                _manager ??= new UpdateManager(new Velopack.Sources.GithubSource(options.UpdateUrl, accessToken: null, prerelease: options.UpdateIncludesPrereleases));
+            }
+            else
+            {
+                _manager ??= new UpdateManager(options.UpdateUrl);
+            }
             if (!_manager.IsInstalled)
                 return;
             _update = await _manager.CheckForUpdatesAsync();
