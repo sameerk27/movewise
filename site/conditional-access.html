@@ -1,0 +1,92 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Migrate Conditional Access policies to another tenant | Movewise</title>
+<meta name="description" content="How to migrate Microsoft Entra Conditional Access policies, named locations and authentication strengths between tenants, with groups and users matched and every policy created in report-only mode.">
+<link rel="canonical" href="https://sameerk27.github.io/movewise/conditional-access.html">
+<link rel="icon" href="assets/icon.svg" type="image/svg+xml">
+<meta property="og:type" content="article">
+<meta property="og:site_name" content="Movewise">
+<meta property="og:title" content="Migrate Conditional Access policies to another tenant | Movewise">
+<meta property="og:description" content="How to migrate Microsoft Entra Conditional Access policies, named locations and authentication strengths between tenants, with groups and users matched and every policy created in report-only mode.">
+<meta property="og:url" content="https://sameerk27.github.io/movewise/conditional-access.html">
+<meta property="og:image" content="https://sameerk27.github.io/movewise/img/og-movewise.png">
+<meta name="twitter:card" content="summary_large_image">
+<link rel="stylesheet" href="assets/site.css">
+</head>
+<body>
+<header class="top">
+  <div class="wrap">
+    <a class="brand" href="./"><svg width="26" height="26" viewBox="0 0 26 26" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" aria-hidden="true"><rect x="2" y="6" width="8" height="14" rx="2"/><rect x="16" y="6" width="8" height="14" rx="2"/><path d="M10 13h6"/></svg>Movewise</a>
+    <nav aria-label="Main">
+      <a href="./">Home</a>
+      <a href="conditional-access.html" aria-current="page">Conditional Access</a>
+      <a href="intune.html">Intune</a>
+      <a href="defender-exchange.html">Defender &amp; Exchange</a>
+      <a href="purview-teams.html">Purview &amp; Teams</a>
+      <a href="compare-drift.html">Compare &amp; drift</a>
+      <a href="faq.html">FAQ</a>
+    </nav>
+  </div>
+</header>
+<main>
+<div class="page-head">
+  <div class="wrap">
+    <p class="crumbs"><a href="./">Movewise</a> / Migrate Conditional Access policies between tenants</p>
+    <h1>Migrate Conditional Access policies between tenants</h1>
+    <p>Copy Microsoft Entra Conditional Access policies, named locations and authentication strengths to another tenant, without breaking the groups, users and apps they point at.</p>
+  </div>
+</div>
+<article class="doc">
+<h2>Why Conditional Access is hard to migrate</h2>
+<p>A Conditional Access policy is mostly references. It includes and excludes groups, users and directory roles by object ID, targets apps by app ID, and points at named locations and authentication strengths by ID. Exporting the JSON and importing it into another tenant fails, or worse, succeeds and quietly applies to nobody, because none of those IDs exist in the destination.</p>
+<p>The exclusions matter most. If a break-glass group or an emergency account isn't excluded in the new tenant, a policy that requires MFA or blocks legacy authentication can lock out the people who are supposed to fix it.</p>
+
+<h2>How Movewise migrates Conditional Access</h2>
+<ul>
+  <li><b>Reads the policies and everything they reference:</b> groups, users, roles, apps, named locations and custom authentication strengths.</li>
+  <li><b>Matches each reference in the destination.</b> Groups by name, then mail nickname. Users by email, then username. Apps by app ID. Named locations and authentication strengths by name, or created along with the policies.</li>
+  <li><b>Lets you decide the rest</b> on the Map screen: match to an existing object, create it in the destination, or remove it from the policies. Mappings export to and import from CSV.</li>
+  <li><b>Rewrites each policy</b> with the destination's IDs and shows a before and after view of every change.</li>
+  <li><b>Creates every Conditional Access policy in report-only mode</b>, so you can check sign-in logs before turning it on.</li>
+</ul>
+<img class="shot" src="img/preflight.png" width="1366" height="720" loading="lazy" alt="Pre-flight view of a Conditional Access policy with the excluded named location rewritten for the destination tenant">
+
+<h2>What pre-flight checks before anything is created</h2>
+<ul>
+  <li>References with no match in the destination: the policy is blocked until they're matched, created or removed.</li>
+  <li>Exclusions that land on a group this migration creates. A new group has no members, so it excludes nobody until you add them.</li>
+  <li>Exclusions you chose to remove, which make a policy apply to more people than in the source.</li>
+  <li>Policies that include all users and exclude nobody.</li>
+  <li>License gaps: risk-based conditions need Entra ID P2, so those policies are created switched off when the destination doesn't have it.</li>
+  <li>Name conflicts with policies already in the destination: skip, rename, or update the existing policy in place.</li>
+  <li>The admin roles needed in the destination.</li>
+</ul>
+
+<h2>Other Entra ID settings</h2>
+<p>Alongside Conditional Access, Movewise migrates Entra ID user settings, the authentication methods policy with each sign-in method (and warns when a method would be switched off or narrowed), cross-tenant access default and partner settings, and custom admin roles. Settings every tenant already has are changed to match the source rather than created, and only settings that differ are changed.</p>
+
+<h2>Rolling back</h2>
+<p>Every deployment is a run that can be rolled back. Rollback deletes only the policies and objects the run created, and puts back the earlier values of settings it changed. Anything that was in the destination before is never deleted.</p>
+</article>
+<section class="cta">
+  <div class="wrap">
+    <h2>Try Movewise free</h2>
+    <p>Windows 10 or 11. Open source, MIT licensed. The built-in demo needs no tenant at all.</p>
+    <div class="actions">
+      <a class="btn primary" href="https://github.com/sameerk27/movewise/releases/latest">Download for Windows</a>
+      <a class="btn ghost" href="https://github.com/sameerk27/movewise">View on GitHub</a>
+    </div>
+  </div>
+</section>
+</main>
+<footer>
+  <div class="wrap">
+    <span>Movewise · MIT licensed · by <a href="https://github.com/sameerk27">Samir Khan</a></span>
+    <span><a href="https://github.com/sameerk27/movewise">GitHub</a> · <a href="https://github.com/sameerk27/movewise/releases">Releases</a> · <a href="https://github.com/sameerk27/movewise/issues">Issues</a> · <a href="faq.html">FAQ</a></span>
+  </div>
+</footer>
+</body>
+</html>

@@ -1,0 +1,95 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Migrate Intune policies to another tenant | Movewise</title>
+<meta name="description" content="Migrate Microsoft Intune configuration profiles, settings catalog, compliance, app protection, Autopilot profiles, assignment filters and scope tags between tenants, with their group assignments.">
+<link rel="canonical" href="https://sameerk27.github.io/movewise/intune.html">
+<link rel="icon" href="assets/icon.svg" type="image/svg+xml">
+<meta property="og:type" content="article">
+<meta property="og:site_name" content="Movewise">
+<meta property="og:title" content="Migrate Intune policies to another tenant | Movewise">
+<meta property="og:description" content="Migrate Microsoft Intune configuration profiles, settings catalog, compliance, app protection, Autopilot profiles, assignment filters and scope tags between tenants, with their group assignments.">
+<meta property="og:url" content="https://sameerk27.github.io/movewise/intune.html">
+<meta property="og:image" content="https://sameerk27.github.io/movewise/img/og-movewise.png">
+<meta name="twitter:card" content="summary_large_image">
+<link rel="stylesheet" href="assets/site.css">
+</head>
+<body>
+<header class="top">
+  <div class="wrap">
+    <a class="brand" href="./"><svg width="26" height="26" viewBox="0 0 26 26" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" aria-hidden="true"><rect x="2" y="6" width="8" height="14" rx="2"/><rect x="16" y="6" width="8" height="14" rx="2"/><path d="M10 13h6"/></svg>Movewise</a>
+    <nav aria-label="Main">
+      <a href="./">Home</a>
+      <a href="conditional-access.html">Conditional Access</a>
+      <a href="intune.html" aria-current="page">Intune</a>
+      <a href="defender-exchange.html">Defender &amp; Exchange</a>
+      <a href="purview-teams.html">Purview &amp; Teams</a>
+      <a href="compare-drift.html">Compare &amp; drift</a>
+      <a href="faq.html">FAQ</a>
+    </nav>
+  </div>
+</header>
+<main>
+<div class="page-head">
+  <div class="wrap">
+    <p class="crumbs"><a href="./">Movewise</a> / Migrate Intune policies between tenants</p>
+    <h1>Migrate Intune policies between tenants</h1>
+    <p>Move Intune configuration, compliance and app protection policies to another Microsoft 365 tenant, with their filters, scope tags and group assignments.</p>
+  </div>
+</div>
+<article class="doc">
+<h2>What Movewise migrates in Intune</h2>
+<table>
+  <thead><tr><th>Type</th><th>Notes</th></tr></thead>
+  <tbody>
+    <tr><td>Settings catalog policies</td><td>With every setting, assignments, filters and scope tags</td></tr>
+    <tr><td>Device configuration profiles</td><td>With assignments</td></tr>
+    <tr><td>Compliance policies</td><td>Including their noncompliance actions</td></tr>
+    <tr><td>App protection policies</td><td>iOS and Android, with their apps</td></tr>
+    <tr><td>Windows Autopilot profiles</td><td>The deployment profiles</td></tr>
+    <tr><td>Assignment filters</td><td>Created before the policies that use them</td></tr>
+    <tr><td>Scope tags</td><td>Custom tags, created before the policies that use them</td></tr>
+  </tbody>
+</table>
+
+<h2>How assignments are kept</h2>
+<p>Intune policies are assigned to groups, often with an assignment filter, and tagged with scope tags. Movewise maps every one of those to the destination tenant before anything is created:</p>
+<ul>
+  <li>Groups are matched by name, then by mail nickname, or created empty in the destination.</li>
+  <li>Assignment filters and scope tags are matched by name, or created along with the policies.</li>
+  <li>Deployment runs in dependency order: scope tags and filters first, then the policies, then their assignments and app protection apps.</li>
+</ul>
+<img class="shot" src="img/map.png" width="1366" height="720" loading="lazy" alt="Movewise Map dependencies screen matching groups between two tenants">
+
+<h2>Checks before deploying</h2>
+<ul>
+  <li>Groups, filters or scope tags with no match block the policies that use them.</li>
+  <li>Intune licenses in the destination are checked.</li>
+  <li>Policies with the same name already in the destination can be skipped, renamed, or updated in place.</li>
+  <li>Every policy has a before and after view of exactly what will be created.</li>
+</ul>
+
+<h2>What isn't migrated</h2>
+<p>Device enrolments, Autopilot device hardware hashes, and app packages themselves stay where they are. Movewise moves policy and configuration, not devices or data.</p>
+</article>
+<section class="cta">
+  <div class="wrap">
+    <h2>Try Movewise free</h2>
+    <p>Windows 10 or 11. Open source, MIT licensed. The built-in demo needs no tenant at all.</p>
+    <div class="actions">
+      <a class="btn primary" href="https://github.com/sameerk27/movewise/releases/latest">Download for Windows</a>
+      <a class="btn ghost" href="https://github.com/sameerk27/movewise">View on GitHub</a>
+    </div>
+  </div>
+</section>
+</main>
+<footer>
+  <div class="wrap">
+    <span>Movewise · MIT licensed · by <a href="https://github.com/sameerk27">Samir Khan</a></span>
+    <span><a href="https://github.com/sameerk27/movewise">GitHub</a> · <a href="https://github.com/sameerk27/movewise/releases">Releases</a> · <a href="https://github.com/sameerk27/movewise/issues">Issues</a> · <a href="faq.html">FAQ</a></span>
+  </div>
+</footer>
+</body>
+</html>

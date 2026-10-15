@@ -1,0 +1,85 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Migrate Purview DLP, sensitivity labels and Teams policies between tenants | Movewise</title>
+<meta name="description" content="Migrate Microsoft Purview DLP and retention policies, sensitivity labels and label policies, Teams meeting, messaging and calling policies, and SharePoint and OneDrive sharing settings to another tenant.">
+<link rel="canonical" href="https://sameerk27.github.io/movewise/purview-teams.html">
+<link rel="icon" href="assets/icon.svg" type="image/svg+xml">
+<meta property="og:type" content="article">
+<meta property="og:site_name" content="Movewise">
+<meta property="og:title" content="Migrate Purview DLP, sensitivity labels and Teams policies between tenants | Movewise">
+<meta property="og:description" content="Migrate Microsoft Purview DLP and retention policies, sensitivity labels and label policies, Teams meeting, messaging and calling policies, and SharePoint and OneDrive sharing settings to another tenant.">
+<meta property="og:url" content="https://sameerk27.github.io/movewise/purview-teams.html">
+<meta property="og:image" content="https://sameerk27.github.io/movewise/img/og-movewise.png">
+<meta name="twitter:card" content="summary_large_image">
+<link rel="stylesheet" href="assets/site.css">
+</head>
+<body>
+<header class="top">
+  <div class="wrap">
+    <a class="brand" href="./"><svg width="26" height="26" viewBox="0 0 26 26" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" aria-hidden="true"><rect x="2" y="6" width="8" height="14" rx="2"/><rect x="16" y="6" width="8" height="14" rx="2"/><path d="M10 13h6"/></svg>Movewise</a>
+    <nav aria-label="Main">
+      <a href="./">Home</a>
+      <a href="conditional-access.html">Conditional Access</a>
+      <a href="intune.html">Intune</a>
+      <a href="defender-exchange.html">Defender &amp; Exchange</a>
+      <a href="purview-teams.html" aria-current="page">Purview &amp; Teams</a>
+      <a href="compare-drift.html">Compare &amp; drift</a>
+      <a href="faq.html">FAQ</a>
+    </nav>
+  </div>
+</header>
+<main>
+<div class="page-head">
+  <div class="wrap">
+    <p class="crumbs"><a href="./">Movewise</a> / Migrate Purview, Teams and SharePoint settings</p>
+    <h1>Migrate Purview, Teams and SharePoint settings</h1>
+    <p>Move Purview DLP, retention and sensitivity labels, Teams policies with their group assignments, and SharePoint and OneDrive settings to another tenant.</p>
+  </div>
+</div>
+<article class="doc">
+<h2>Microsoft Purview</h2>
+<ul>
+  <li><b>DLP policies</b> with their rules, created in <b>simulation mode</b>.</li>
+  <li><b>Retention policies</b> with their rules, created switched off, and never with Preservation Lock.</li>
+  <li><b>Sensitivity labels</b>: encryption, headers and footers, watermarks, site and group protection, and documented advanced settings. Sublabels are created after their parents.</li>
+  <li><b>Label policies</b>, linked to the labels migrated with them.</li>
+  <li>Endpoint DLP's tenant-wide settings.</li>
+</ul>
+<p>Policies using adaptive scopes are left out, and settings that New-Label doesn't document are listed for you rather than sent.</p>
+
+<h2>Microsoft Teams</h2>
+<ul>
+  <li>Meeting, messaging, calling, app setup, app permission, channels and update policies, each with its <b>group assignments</b> in the source's order.</li>
+  <li>Org-wide (Global) policies, external access, guest access, cloud storage, meeting settings, and guest meeting, messaging and calling settings, changed to match the source.</li>
+  <li>Built-in policies are left out. Policies assigned only to single users are listed.</li>
+</ul>
+<p>Teams PowerShell is bundled with the app.</p>
+
+<h2>SharePoint and OneDrive</h2>
+<p>Sharing, sync and site creation settings, changed to match the source. Sites referenced by policies are matched by the same path in the destination's SharePoint.</p>
+
+<h2>Admin roles</h2>
+<p>Each type can need its own admin role in the destination, such as Compliance Administrator, Teams Administrator or SharePoint Administrator. Pre-flight checks them before deploying.</p>
+</article>
+<section class="cta">
+  <div class="wrap">
+    <h2>Try Movewise free</h2>
+    <p>Windows 10 or 11. Open source, MIT licensed. The built-in demo needs no tenant at all.</p>
+    <div class="actions">
+      <a class="btn primary" href="https://github.com/sameerk27/movewise/releases/latest">Download for Windows</a>
+      <a class="btn ghost" href="https://github.com/sameerk27/movewise">View on GitHub</a>
+    </div>
+  </div>
+</section>
+</main>
+<footer>
+  <div class="wrap">
+    <span>Movewise · MIT licensed · by <a href="https://github.com/sameerk27">Samir Khan</a></span>
+    <span><a href="https://github.com/sameerk27/movewise">GitHub</a> · <a href="https://github.com/sameerk27/movewise/releases">Releases</a> · <a href="https://github.com/sameerk27/movewise/issues">Issues</a> · <a href="faq.html">FAQ</a></span>
+  </div>
+</footer>
+</body>
+</html>

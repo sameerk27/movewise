@@ -1,0 +1,91 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Movewise FAQ: Microsoft 365 tenant-to-tenant policy migration</title>
+<meta name="description" content="Answers about Movewise: what it migrates, whether it is free, whether it changes the source tenant, rollback, permissions, the demo, and what it does not migrate.">
+<link rel="canonical" href="https://sameerk27.github.io/movewise/faq.html">
+<link rel="icon" href="assets/icon.svg" type="image/svg+xml">
+<meta property="og:type" content="article">
+<meta property="og:site_name" content="Movewise">
+<meta property="og:title" content="Movewise FAQ: Microsoft 365 tenant-to-tenant policy migration">
+<meta property="og:description" content="Answers about Movewise: what it migrates, whether it is free, whether it changes the source tenant, rollback, permissions, the demo, and what it does not migrate.">
+<meta property="og:url" content="https://sameerk27.github.io/movewise/faq.html">
+<meta property="og:image" content="https://sameerk27.github.io/movewise/img/og-movewise.png">
+<meta name="twitter:card" content="summary_large_image">
+<link rel="stylesheet" href="assets/site.css">
+<script type="application/ld+json">
+{
+  "@context": "https://schema.org",
+  "@type": "FAQPage",
+  "mainEntity": [
+    { "@type": "Question", "name": "What is Movewise?", "acceptedAnswer": { "@type": "Answer", "text": "Movewise is a free, open-source Windows app that migrates Microsoft 365 policies from one tenant to another: Conditional Access, Intune, Defender for Office 365, Defender for Endpoint, Exchange Online, Purview, Teams and SharePoint settings. It maps every dependency, runs a pre-flight dry run, deploys in order and can roll back." } },
+    { "@type": "Question", "name": "Is Movewise free?", "acceptedAnswer": { "@type": "Answer", "text": "Yes. Movewise is free and open source under the MIT license. The source code and releases are on GitHub." } },
+    { "@type": "Question", "name": "Does Movewise migrate mailboxes or files?", "acceptedAnswer": { "@type": "Answer", "text": "No. Movewise migrates policies and settings only. Mailboxes, OneDrive and SharePoint files, Teams chats and other user data need a separate data migration tool." } },
+    { "@type": "Question", "name": "Can Movewise change the source tenant?", "acceptedAnswer": { "@type": "Answer", "text": "No. The source tenant only ever gets read-only clients: its Microsoft Graph client has no write methods, and its PowerShell sessions refuse anything but Get cmdlets." } },
+    { "@type": "Question", "name": "How do I migrate Conditional Access policies to another tenant?", "acceptedAnswer": { "@type": "Answer", "text": "With Movewise, sign in to both tenants, choose the Conditional Access policies on Discover, match the groups, users, apps, named locations and authentication strengths they use on the Map screen, check the pre-flight dry run, and deploy. Every Conditional Access policy is created in report-only mode." } },
+    { "@type": "Question", "name": "Can I undo a migration?", "acceptedAnswer": { "@type": "Answer", "text": "Yes. Every deployment is a run that can be rolled back. Rollback deletes only the objects the run created and puts back the earlier values of settings it changed. Nothing that was in the destination before is deleted." } },
+    { "@type": "Question", "name": "Can I try Movewise without a tenant?", "acceptedAnswer": { "@type": "Answer", "text": "Yes. Try the demo on the Connect screen connects two built-in sample tenants, Contoso and Fabrikam, that live only on your PC. Every step works, including deploy and rollback." } },
+    { "@type": "Question", "name": "What does Movewise need to run?", "acceptedAnswer": { "@type": "Answer", "text": "64-bit Windows 10 or 11 and admin accounts in both tenants. .NET and the Exchange Online and Teams PowerShell modules are included in the installer." } }
+  ]
+}
+</script>
+</head>
+<body>
+<header class="top">
+  <div class="wrap">
+    <a class="brand" href="./"><svg width="26" height="26" viewBox="0 0 26 26" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" aria-hidden="true"><rect x="2" y="6" width="8" height="14" rx="2"/><rect x="16" y="6" width="8" height="14" rx="2"/><path d="M10 13h6"/></svg>Movewise</a>
+    <nav aria-label="Main">
+      <a href="./">Home</a>
+      <a href="conditional-access.html">Conditional Access</a>
+      <a href="intune.html">Intune</a>
+      <a href="defender-exchange.html">Defender &amp; Exchange</a>
+      <a href="purview-teams.html">Purview &amp; Teams</a>
+      <a href="compare-drift.html">Compare &amp; drift</a>
+      <a href="faq.html" aria-current="page">FAQ</a>
+    </nav>
+  </div>
+</header>
+<main>
+<div class="page-head">
+  <div class="wrap">
+    <p class="crumbs"><a href="./">Movewise</a> / Frequently asked questions</p>
+    <h1>Frequently asked questions</h1>
+    <p>About migrating Microsoft 365 policies between tenants with Movewise.</p>
+  </div>
+</div>
+<article class="doc">
+<details open><summary>What is Movewise?</summary><p>A free, open-source Windows app that migrates Microsoft 365 policies from one tenant to another: Conditional Access, Intune, Defender for Office 365, Defender for Endpoint, Exchange Online, Purview, Teams and SharePoint settings. It maps every dependency, runs a pre-flight dry run, deploys in order and can roll back.</p></details>
+<details><summary>Is it free?</summary><p>Yes. Movewise is free and open source under the MIT license. The source code and releases are <a href="https://github.com/sameerk27/movewise">on GitHub</a>.</p></details>
+<details><summary>Does it migrate mailboxes, files or Teams chats?</summary><p>No. Movewise migrates policies and settings only. Mailboxes, OneDrive and SharePoint files, Teams chats and other user data need a separate data migration tool.</p></details>
+<details><summary>Can it change the source tenant?</summary><p>No. The source tenant only ever gets read-only clients: its Microsoft Graph client has no write methods, and its PowerShell sessions refuse anything but <code>Get-</code> cmdlets.</p></details>
+<details><summary>How do I migrate Conditional Access policies to another tenant?</summary><p>Sign in to both tenants, choose the policies on Discover, match the groups, users, apps, named locations and authentication strengths they use on the Map screen, check the pre-flight dry run, and deploy. Every Conditional Access policy is created in report-only mode. <a href="conditional-access.html">More on Conditional Access migration</a>.</p></details>
+<details><summary>Can I undo a migration?</summary><p>Yes. Every deployment is a run that can be rolled back. Rollback deletes only the objects the run created and puts back the earlier values of settings it changed. Nothing that was in the destination before is deleted.</p></details>
+<details><summary>What happens if a policy with the same name already exists?</summary><p>Pre-flight lists name conflicts. For each one you choose to skip it, create it with a suffix, or update the existing policy in place, in which case only the settings that differ are changed, and rollback puts the policy back.</p></details>
+<details><summary>What permissions does it need?</summary><p>Admin accounts in both tenants. When you first sign in to the destination, Movewise sets up its app registration there. You can use your own registration instead. The full list of permissions is in the <a href="https://github.com/sameerk27/movewise/blob/master/docs/app-registration.md">app registration guide</a>.</p></details>
+<details><summary>Can I try it without a tenant?</summary><p>Yes. <b>Try the demo</b> on the Connect screen connects two built-in sample tenants, Contoso and Fabrikam, that live only on your PC. Every step works, including deploy and rollback.</p></details>
+<details><summary>What does it need to run?</summary><p>64-bit Windows 10 or 11. .NET and the Exchange Online and Teams PowerShell modules are included in the installer, which installs for the current user with no admin rights needed.</p></details>
+<details><summary>Is the installer signed?</summary><p>Not yet. Current releases are unsigned test builds, so Windows SmartScreen warns when the installer runs. Try it against test tenants first.</p></details>
+<details><summary>Where is my data kept?</summary><p>On your PC, under <code>%LOCALAPPDATA%\MovewiseData</code>: saved exports, deployment runs, snapshots, baselines and support logs. Support logs have tokens, email addresses, tenant domains and IP addresses removed.</p></details>
+<details><summary>Can it compare tenants or detect drift?</summary><p>Yes. Compare shows differences between two tenants, or between a tenant and a snapshot of it. The drift monitor checks each tenant against its latest snapshot, and changes can be restored. <a href="compare-drift.html">More on compare and drift</a>.</p></details>
+</article>
+<section class="cta">
+  <div class="wrap">
+    <h2>Try Movewise free</h2>
+    <p>Windows 10 or 11. Open source, MIT licensed. The built-in demo needs no tenant at all.</p>
+    <div class="actions">
+      <a class="btn primary" href="https://github.com/sameerk27/movewise/releases/latest">Download for Windows</a>
+      <a class="btn ghost" href="https://github.com/sameerk27/movewise">View on GitHub</a>
+    </div>
+  </div>
+</section>
+</main>
+<footer>
+  <div class="wrap">
+    <span>Movewise · MIT licensed · by <a href="https://github.com/sameerk27">Samir Khan</a></span>
+    <span><a href="https://github.com/sameerk27/movewise">GitHub</a> · <a href="https://github.com/sameerk27/movewise/releases">Releases</a> · <a href="https://github.com/sameerk27/movewise/issues">Issues</a> · <a href="faq.html">FAQ</a></span>
+  </div>
+</footer>
+</body>
+</html>

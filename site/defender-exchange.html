@@ -1,0 +1,89 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Migrate Defender for Office 365 and Exchange Online policies between tenants | Movewise</title>
+<meta name="description" content="Migrate Defender for Office 365 anti-phishing, anti-spam, anti-malware, Safe Links and Safe Attachments policies, Tenant Allow/Block List, Exchange mail flow rules and Defender for Endpoint indicators to another tenant.">
+<link rel="canonical" href="https://sameerk27.github.io/movewise/defender-exchange.html">
+<link rel="icon" href="assets/icon.svg" type="image/svg+xml">
+<meta property="og:type" content="article">
+<meta property="og:site_name" content="Movewise">
+<meta property="og:title" content="Migrate Defender for Office 365 and Exchange Online policies between tenants | Movewise">
+<meta property="og:description" content="Migrate Defender for Office 365 anti-phishing, anti-spam, anti-malware, Safe Links and Safe Attachments policies, Tenant Allow/Block List, Exchange mail flow rules and Defender for Endpoint indicators to another tenant.">
+<meta property="og:url" content="https://sameerk27.github.io/movewise/defender-exchange.html">
+<meta property="og:image" content="https://sameerk27.github.io/movewise/img/og-movewise.png">
+<meta name="twitter:card" content="summary_large_image">
+<link rel="stylesheet" href="assets/site.css">
+</head>
+<body>
+<header class="top">
+  <div class="wrap">
+    <a class="brand" href="./"><svg width="26" height="26" viewBox="0 0 26 26" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" aria-hidden="true"><rect x="2" y="6" width="8" height="14" rx="2"/><rect x="16" y="6" width="8" height="14" rx="2"/><path d="M10 13h6"/></svg>Movewise</a>
+    <nav aria-label="Main">
+      <a href="./">Home</a>
+      <a href="conditional-access.html">Conditional Access</a>
+      <a href="intune.html">Intune</a>
+      <a href="defender-exchange.html" aria-current="page">Defender &amp; Exchange</a>
+      <a href="purview-teams.html">Purview &amp; Teams</a>
+      <a href="compare-drift.html">Compare &amp; drift</a>
+      <a href="faq.html">FAQ</a>
+    </nav>
+  </div>
+</header>
+<main>
+<div class="page-head">
+  <div class="wrap">
+    <p class="crumbs"><a href="./">Movewise</a> / Migrate Defender and Exchange Online policies</p>
+    <h1>Migrate Defender and Exchange Online policies</h1>
+    <p>Move Defender for Office 365 threat policies, Exchange Online mail flow and retention settings, and Defender for Endpoint indicators to another tenant.</p>
+  </div>
+</div>
+<article class="doc">
+<h2>Defender for Office 365</h2>
+<ul>
+  <li>Anti-phishing, anti-spam, outbound spam and anti-malware policies, each with its rule.</li>
+  <li>Safe Links and Safe Attachments policies, with their rules.</li>
+  <li>Quarantine policies, created before the policies that name them. Built-in ones are left out.</li>
+  <li>The Tenant Allow/Block List: senders, URLs and file hashes. Expired entries are left out.</li>
+  <li>Default policies, the tenant-wide Safe Links and Safe Attachments settings, quarantine notification settings, and the Standard and Strict preset security policies are <b>changed to match</b> the source rather than created. Only settings that differ are changed.</li>
+</ul>
+
+<h2>Exchange Online</h2>
+<ul>
+  <li>Mail flow (transport) rules, created in <b>test mode</b>.</li>
+  <li>Journal rules, created switched off.</li>
+  <li>Remote domains, including the Default remote domain.</li>
+  <li>Outlook on the web policies and mobile device mailbox policies, and their defaults.</li>
+  <li>Mailbox retention tags and retention policies (MRM). Built-in tags are left out.</li>
+</ul>
+<p>Domains, mailboxes and groups referenced by these policies are mapped too: partner domains are kept, <code>.onmicrosoft.com</code> domains are matched automatically, and addresses are rewritten with the domain's match.</p>
+
+<h2>Defender for Endpoint</h2>
+<p>Indicators (blocked or allowed files, IPs, URLs and certificates) and custom detection rules.</p>
+
+<h2>How it connects</h2>
+<p>Exchange Online and Security &amp; Compliance PowerShell run inside the app, so there's nothing to install. The source tenant's sessions refuse anything but <code>Get-</code> cmdlets, so nothing can be written there. Only settings a <code>New-</code> cmdlet accepts are sent, and anything it can't take is listed for you to set by hand.</p>
+
+<h2>Rollback</h2>
+<p>Rollback removes what the run created and puts back the earlier values of default policies and settings it changed.</p>
+</article>
+<section class="cta">
+  <div class="wrap">
+    <h2>Try Movewise free</h2>
+    <p>Windows 10 or 11. Open source, MIT licensed. The built-in demo needs no tenant at all.</p>
+    <div class="actions">
+      <a class="btn primary" href="https://github.com/sameerk27/movewise/releases/latest">Download for Windows</a>
+      <a class="btn ghost" href="https://github.com/sameerk27/movewise">View on GitHub</a>
+    </div>
+  </div>
+</section>
+</main>
+<footer>
+  <div class="wrap">
+    <span>Movewise · MIT licensed · by <a href="https://github.com/sameerk27">Samir Khan</a></span>
+    <span><a href="https://github.com/sameerk27/movewise">GitHub</a> · <a href="https://github.com/sameerk27/movewise/releases">Releases</a> · <a href="https://github.com/sameerk27/movewise/issues">Issues</a> · <a href="faq.html">FAQ</a></span>
+  </div>
+</footer>
+</body>
+</html>
