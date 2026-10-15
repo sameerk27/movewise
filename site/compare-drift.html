@@ -1,0 +1,77 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Compare Microsoft 365 tenants and monitor configuration drift | Movewise</title>
+<meta name="description" content="Compare two Microsoft 365 tenants setting by setting, take snapshots of a tenant configuration, detect drift since the last snapshot, restore changed settings, and apply policy baselines to other tenants.">
+<link rel="canonical" href="https://sameerk27.github.io/movewise/compare-drift.html">
+<link rel="icon" href="assets/icon.svg" type="image/svg+xml">
+<meta property="og:type" content="article">
+<meta property="og:site_name" content="Movewise">
+<meta property="og:title" content="Compare Microsoft 365 tenants and monitor configuration drift | Movewise">
+<meta property="og:description" content="Compare two Microsoft 365 tenants setting by setting, take snapshots of a tenant configuration, detect drift since the last snapshot, restore changed settings, and apply policy baselines to other tenants.">
+<meta property="og:url" content="https://sameerk27.github.io/movewise/compare-drift.html">
+<meta property="og:image" content="https://sameerk27.github.io/movewise/img/og-movewise.png">
+<meta name="twitter:card" content="summary_large_image">
+<link rel="stylesheet" href="assets/site.css">
+</head>
+<body>
+<header class="top">
+  <div class="wrap">
+    <a class="brand" href="./"><svg width="26" height="26" viewBox="0 0 26 26" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" aria-hidden="true"><rect x="2" y="6" width="8" height="14" rx="2"/><rect x="16" y="6" width="8" height="14" rx="2"/><path d="M10 13h6"/></svg>Movewise</a>
+    <nav aria-label="Main">
+      <a href="./">Home</a>
+      <a href="conditional-access.html">Conditional Access</a>
+      <a href="intune.html">Intune</a>
+      <a href="defender-exchange.html">Defender &amp; Exchange</a>
+      <a href="purview-teams.html">Purview &amp; Teams</a>
+      <a href="compare-drift.html" aria-current="page">Compare &amp; drift</a>
+      <a href="faq.html">FAQ</a>
+    </nav>
+  </div>
+</header>
+<main>
+<div class="page-head">
+  <div class="wrap">
+    <p class="crumbs"><a href="./">Movewise</a> / Compare tenants and monitor drift</p>
+    <h1>Compare tenants and monitor drift</h1>
+    <p>See what differs between two Microsoft 365 tenants, or what changed in one since a snapshot, and put it back. Everything only reads until you choose to restore.</p>
+  </div>
+</div>
+<article class="doc">
+<h2>Compare two tenants</h2>
+<p>Compare shows which policies and settings are only in one tenant and which are set differently. The source's policies are first put in the destination's terms, matching groups, users and locations as a migration would, so a group with a different ID isn't reported as a difference. Each item shows both versions side by side, with only the settings that differ, and the comparison exports to CSV.</p>
+<img class="shot" src="img/compare.png" width="1366" height="720" loading="lazy" alt="Movewise comparing a tenant with a snapshot: removed, added, changed and unchanged counts">
+
+<h2>Snapshots</h2>
+<p>A snapshot is a point-in-time copy of a tenant's configuration. Take one before a change window and compare the tenant with it later to see what was added, removed or changed. Snapshots are stored as files on your PC, in <code>%LOCALAPPDATA%\MovewiseData\Snapshots</code>, until you delete them.</p>
+
+<h2>Drift monitor</h2>
+<p><b>Check now</b> compares every signed-in tenant with its latest snapshot and lists each policy or setting that changed since, with the settings that differ. Open any item in Compare to see both versions side by side, or to restore it.</p>
+
+<h2>Restore from a snapshot</h2>
+<p>After comparing a tenant with a snapshot, restore recreates what was removed and puts changed settings and policies back as they were. It runs the same pre-flight checks as a migration, then deploys as a run you start and can roll back. Restored policies come back in report-only or test mode unless you choose otherwise. A restore never deletes anything added since the snapshot, and a snapshot is only restored into the tenant it was taken of.</p>
+
+<h2>Baselines</h2>
+<p>A baseline is a set of policies saved once from a migration, along with what they point at in the template tenant. Apply it to other tenants later without signing in to the template again: on the Connect screen, a baseline can be the source once the destination is signed in. Useful for MSPs and organisations that roll the same security standard out to many tenants.</p>
+</article>
+<section class="cta">
+  <div class="wrap">
+    <h2>Try Movewise free</h2>
+    <p>Windows 10 or 11. Open source, MIT licensed. The built-in demo needs no tenant at all.</p>
+    <div class="actions">
+      <a class="btn primary" href="https://github.com/sameerk27/movewise/releases/latest">Download for Windows</a>
+      <a class="btn ghost" href="https://github.com/sameerk27/movewise">View on GitHub</a>
+    </div>
+  </div>
+</section>
+</main>
+<footer>
+  <div class="wrap">
+    <span>Movewise · MIT licensed · by <a href="https://github.com/sameerk27">Samir Khan</a></span>
+    <span><a href="https://github.com/sameerk27/movewise">GitHub</a> · <a href="https://github.com/sameerk27/movewise/releases">Releases</a> · <a href="https://github.com/sameerk27/movewise/issues">Issues</a> · <a href="faq.html">FAQ</a></span>
+  </div>
+</footer>
+</body>
+</html>

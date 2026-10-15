@@ -1,0 +1,151 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Movewise: Microsoft 365 tenant-to-tenant policy migration tool (free)</title>
+<meta name="description" content="Free, open-source Windows app that migrates Microsoft 365 policies between tenants: Conditional Access, Intune, Defender, Exchange, Purview and Teams. Map dependencies, run a dry run, deploy, and roll back.">
+<link rel="canonical" href="https://sameerk27.github.io/movewise/">
+<link rel="icon" href="assets/icon.svg" type="image/svg+xml">
+<meta property="og:type" content="website">
+<meta property="og:site_name" content="Movewise">
+<meta property="og:title" content="Movewise: migrate Microsoft 365 policies between tenants, with a dry run first">
+<meta property="og:description" content="Free, open-source tenant-to-tenant migration for Conditional Access, Intune, Defender, Exchange, Purview and Teams policies. Dry run, deploy, rollback.">
+<meta property="og:url" content="https://sameerk27.github.io/movewise/">
+<meta property="og:image" content="https://sameerk27.github.io/movewise/img/og-movewise.png">
+<meta name="twitter:card" content="summary_large_image">
+<link rel="stylesheet" href="assets/site.css">
+<script type="application/ld+json">
+{
+  "@context": "https://schema.org",
+  "@type": "SoftwareApplication",
+  "name": "Movewise",
+  "description": "Windows app that migrates Microsoft 365 policies between tenants (Conditional Access, Intune, Defender for Office 365, Defender for Endpoint, Exchange Online, Purview, Teams, SharePoint) with dependency mapping, a pre-flight dry run, ordered deployment and rollback. Also compares tenants, takes snapshots, monitors drift and saves baselines.",
+  "applicationCategory": "BusinessApplication",
+  "applicationSubCategory": "Microsoft 365 tenant migration",
+  "operatingSystem": "Windows 10, Windows 11",
+  "softwareVersion": "0.2.0",
+  "license": "https://opensource.org/licenses/MIT",
+  "isAccessibleForFree": true,
+  "offers": { "@type": "Offer", "price": "0", "priceCurrency": "USD" },
+  "url": "https://sameerk27.github.io/movewise/",
+  "downloadUrl": "https://github.com/sameerk27/movewise/releases/latest",
+  "screenshot": "https://sameerk27.github.io/movewise/img/preflight.png",
+  "author": { "@type": "Person", "name": "Samir Khan", "url": "https://github.com/sameerk27" },
+  "sameAs": ["https://github.com/sameerk27/movewise"]
+}
+</script>
+</head>
+<body>
+<header class="top">
+  <div class="wrap">
+    <a class="brand" href="./"><svg width="26" height="26" viewBox="0 0 26 26" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" aria-hidden="true"><rect x="2" y="6" width="8" height="14" rx="2"/><rect x="16" y="6" width="8" height="14" rx="2"/><path d="M10 13h6"/></svg>Movewise</a>
+    <nav aria-label="Main">
+      <a href="./" aria-current="page">Home</a>
+      <a href="conditional-access.html">Conditional Access</a>
+      <a href="intune.html">Intune</a>
+      <a href="defender-exchange.html">Defender &amp; Exchange</a>
+      <a href="purview-teams.html">Purview &amp; Teams</a>
+      <a href="compare-drift.html">Compare &amp; drift</a>
+      <a href="faq.html">FAQ</a>
+    </nav>
+  </div>
+</header>
+
+<main>
+<section class="hero">
+  <div class="wrap">
+    <span class="tag">Free · open source · Windows · v0.2.0</span>
+    <h1>Migrate Microsoft 365 policies between tenants. <span>Dry run first, rollback after.</span></h1>
+    <p class="lead">Movewise is a free Windows app for tenant-to-tenant migrations. It moves Conditional Access, Intune, Defender, Exchange, Purview and Teams policies from one Microsoft 365 tenant to another, matches every group, user and app they point at, and shows you exactly what will change before anything is written.</p>
+    <div class="actions">
+      <a class="btn primary" href="https://github.com/sameerk27/movewise/releases/latest">Download for Windows</a>
+      <a class="btn ghost" href="https://github.com/sameerk27/movewise">View on GitHub</a>
+    </div>
+    <img class="shot" src="img/preflight.png" width="1366" height="720" alt="Movewise pre-flight checks: 39 policies to create, 14 skipped, 12 blocked, with a before and after view of a Conditional Access policy">
+  </div>
+</section>
+
+<section class="block">
+  <div class="wrap">
+    <h2>How a tenant-to-tenant policy migration works</h2>
+    <p class="intro">Policies don't break when they're copied. They break because they point at groups, users, apps and locations by ID, and those IDs don't exist in the new tenant. Movewise handles that in five steps.</p>
+    <ol class="steps">
+      <li><div><b>Connect</b><span>Sign in to the source and the destination tenant. The source is read-only: its Graph client can only read, and its PowerShell sessions refuse anything but Get cmdlets. Choose the services to migrate.</span></div></li>
+      <li><div><b>Discover</b><span>Every policy is read with what it depends on: groups, users, apps, named locations, filters, scope tags, domains, mailboxes and sites.</span></div></li>
+      <li><div><b>Map dependencies</b><span>Each one is matched in the destination automatically (by name, email, app ID or domain), or matched, created or removed by hand. Mappings export to and import from CSV.</span></div></li>
+      <li><div><b>Pre-flight dry run</b><span>Every policy is rewritten for the destination and checked for unmatched objects, name conflicts, missing licenses and admin roles, and removed exclusions, with a before and after view of each one.</span></div></li>
+      <li><div><b>Deploy and roll back</b><span>Policies are created in dependency order, with progress saved after every object. A run can be resumed, and rolled back to remove only what it created.</span></div></li>
+    </ol>
+  </div>
+</section>
+
+<section class="block alt">
+  <div class="wrap">
+    <h2>What Movewise migrates</h2>
+    <p class="intro">Policies and settings across eight Microsoft 365 services. Mailboxes, files and other user data are out of scope.</p>
+    <div class="grid">
+      <div class="card"><h3>Entra ID</h3><p>Conditional Access, named locations, authentication strengths, user settings, the authentication methods policy, cross-tenant access, custom admin roles.</p><a class="more" href="conditional-access.html">Conditional Access migration →</a></div>
+      <div class="card"><h3>Intune</h3><p>Settings catalog, device configuration, compliance, app protection, Autopilot profiles, assignment filters and scope tags, with assignments.</p><a class="more" href="intune.html">Intune migration →</a></div>
+      <div class="card"><h3>Defender &amp; Exchange</h3><p>Anti-phishing, anti-spam, Safe Links, Safe Attachments, quarantine, Tenant Allow/Block List, mail flow and journal rules, retention tags, and Defender for Endpoint indicators.</p><a class="more" href="defender-exchange.html">Defender and Exchange →</a></div>
+      <div class="card"><h3>Purview, Teams &amp; SharePoint</h3><p>DLP and retention policies, sensitivity labels and label policies, Teams policies with group assignments, and SharePoint and OneDrive sharing settings.</p><a class="more" href="purview-teams.html">Purview and Teams →</a></div>
+    </div>
+  </div>
+</section>
+
+<section class="block">
+  <div class="wrap">
+    <h2>Safe by design</h2>
+    <div class="split">
+      <ul class="checks">
+        <li><b>The source tenant is never changed.</b> Read-only Graph, Get-only PowerShell.</li>
+        <li><b>Policies land switched off or in test mode.</b> Conditional Access in report-only, mail flow rules in test mode, DLP in simulation, retention policies switched off.</li>
+        <li><b>Rollback only undoes the run.</b> It deletes what the run created and puts changed settings back. Nothing that was there before is deleted.</li>
+        <li><b>Resumable.</b> Progress is saved after every object, so a stop, crash or dropped connection doesn't lose the run.</li>
+        <li><b>Try it without a tenant.</b> The built-in demo uses two sample tenants that live only on your PC.</li>
+      </ul>
+      <img class="shot" src="img/rollback.png" width="1366" height="720" loading="lazy" alt="Movewise deploy screen after a rollback: every object deleted or put back as it was">
+    </div>
+  </div>
+</section>
+
+<section class="block alt">
+  <div class="wrap">
+    <h2>After the migration: compare, snapshots and drift</h2>
+    <div class="split flip">
+      <img class="shot" src="img/compare.png" width="1366" height="720" loading="lazy" alt="Movewise Compare screen comparing a tenant with a snapshot">
+      <div>
+        <p>Movewise 0.2.0 keeps tenants in shape once they're migrated.</p>
+        <ul class="checks">
+          <li><b>Compare</b> two tenants setting by setting, or a tenant with an earlier snapshot of itself.</li>
+          <li><b>Snapshots</b> save a tenant's configuration to compare with later.</li>
+          <li><b>Drift monitor</b> checks each tenant against its latest snapshot.</li>
+          <li><b>Restore</b> what was removed or changed since a snapshot, as a run you can roll back.</li>
+          <li><b>Baselines</b> save a set of policies once and apply it to other tenants.</li>
+        </ul>
+        <a class="btn ghost" href="compare-drift.html" style="margin-top:20px">Compare and drift monitoring →</a>
+      </div>
+    </div>
+  </div>
+</section>
+
+<section class="cta">
+  <div class="wrap">
+    <h2>Free and open source</h2>
+    <p>Windows 10 or 11. .NET and the Exchange and Teams PowerShell modules are included. MIT licensed.</p>
+    <div class="actions">
+      <a class="btn primary" href="https://github.com/sameerk27/movewise/releases/latest">Download Movewise</a>
+      <a class="btn ghost" href="faq.html">Read the FAQ</a>
+    </div>
+  </div>
+</section>
+</main>
+
+<footer>
+  <div class="wrap">
+    <span>Movewise · MIT licensed · by <a href="https://github.com/sameerk27">Samir Khan</a></span>
+    <span><a href="https://github.com/sameerk27/movewise">GitHub</a> · <a href="https://github.com/sameerk27/movewise/releases">Releases</a> · <a href="https://github.com/sameerk27/movewise/issues">Issues</a> · <a href="faq.html">FAQ</a></span>
+  </div>
+</footer>
+</body>
+</html>

@@ -2,7 +2,7 @@
 
 # Movewise
 
-**Move Microsoft 365 policies from one tenant to another, with a dry run before anything changes.**
+**Free, open-source Microsoft 365 tenant-to-tenant migration tool for policies: move Conditional Access, Intune, Defender, Exchange, Purview and Teams policies to another tenant, with a dry run before anything changes.**
 
 ![Platform](https://img.shields.io/badge/platform-Windows%2010%20%7C%2011-0078D4)
 ![.NET](https://img.shields.io/badge/.NET-8-512BD4)
@@ -10,13 +10,15 @@
 ![Status](https://img.shields.io/badge/status-pre--release%200.2.0-orange)
 [![License: MIT](https://img.shields.io/badge/license-MIT-green)](LICENSE)
 
-[Download](#download) · [Build from source](#build-from-source) · [How it works](#how-it-works) · [What it migrates](#what-it-migrates) · [Docs](#documentation)
+[Website](https://sameerk27.github.io/movewise/) · [Download](#download) · [How it works](#how-it-works) · [What it migrates](#what-it-migrates) · [FAQ](#faq) · [Build from source](#build-from-source) · [Docs](#documentation)
 
 </div>
 
 ---
 
-Movewise is a Windows app for tenant-to-tenant migrations. An admin signs in to the **source** tenant (read only) and the **destination** tenant, picks the policies to move, maps everything they depend on, checks the result in a dry run, and deploys. Every run can be resumed, and rolled back to take out only what it created.
+Movewise is a free Windows app for **Microsoft 365 tenant-to-tenant migrations**, for mergers, acquisitions, divestitures and MSPs consolidating tenants. It migrates **policies and settings**, not mailboxes or files: Entra ID Conditional Access, Intune, Defender for Office 365, Defender for Endpoint, Exchange Online, Purview, Teams and SharePoint.
+
+An admin signs in to the **source** tenant (read only) and the **destination** tenant, picks the policies to move, maps every group, user, app and named location they depend on, checks the result in a dry run, and deploys. Every run can be resumed, and rolled back to take out only what it created. After the migration, Movewise compares tenants, takes snapshots, monitors configuration drift, and saves policy baselines to apply to other tenants.
 
 ## How it works
 
@@ -209,6 +211,25 @@ Phases 0 to 5 of the build plan:
 
 </details>
 
+## FAQ
+
+**How do I migrate Conditional Access policies to another tenant?**
+Sign in to both tenants, choose the policies on Discover, match the groups, users, apps, named locations and authentication strengths they use on the Map screen, check the pre-flight dry run, and deploy. Every Conditional Access policy is created in report-only mode. See [migrating Conditional Access](https://sameerk27.github.io/movewise/conditional-access.html).
+
+**Does it migrate mailboxes, files or Teams chats?**
+No. Movewise migrates policies and settings only. User data needs a separate data migration tool.
+
+**Can it change the source tenant?**
+No. The source only gets read-only clients: a Graph client with no write methods, and PowerShell sessions that refuse anything but `Get-` cmdlets.
+
+**Can I undo a migration?**
+Yes. Rollback deletes only what the run created and puts changed settings back. Nothing that was in the destination before is deleted.
+
+**Can I try it without a tenant?**
+Yes. **Try the demo** connects two sample tenants that live only on your PC.
+
+More answers on the [website's FAQ](https://sameerk27.github.io/movewise/faq.html).
+
 ## Before the first release
 
 - [ ] A code signing certificate (until then Windows SmartScreen warns "Unknown publisher")
@@ -225,6 +246,7 @@ Phases 0 to 5 of the build plan:
 | `tests/Movewise.Core.Tests` | Unit tests for the engine |
 | `tools/` | `Save-Modules.ps1` (bundle the PowerShell modules) and `Publish.ps1` (build a release) |
 | `.github/workflows/release.yml` | The Release workflow |
+| `site/` | The website, published to GitHub Pages by `.github/workflows/pages.yml` |
 
 Adding a policy type means adding one entry to `ResourceRegistry`: where to read and create it, how to assign it, which fields are read-only, and which fields point at other objects.
 
