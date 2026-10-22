@@ -69,6 +69,12 @@ public sealed class DeployStep
     /// <summary>For an app: the destination users to add as its owners, once it exists.</summary>
     public JsonArray? Owners { get; init; }
 
+    /// <summary>For an app registration: its new app ID in the destination, once created.</summary>
+    public string? AppId { get; set; }
+
+    /// <summary>For an app registration: its service principal in the destination (<see cref="DestinationId"/> is the registration).</summary>
+    public string? ServicePrincipalId { get; set; }
+
     /// <summary>Apps an app protection policy covers, sent after the policy exists.</summary>
     public JsonArray? Apps { get; init; }
 

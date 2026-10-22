@@ -56,6 +56,7 @@ public static class ResourceRegistry
 
     // Applications, migrated in their own section rather than with the policies.
     public const string EnterpriseApp = "enterpriseApp";
+    public const string AppRegistration = "appRegistration";
 
     // Defender for Office 365
     public const string AntiPhishPolicy = "antiPhishPolicy";
@@ -1086,6 +1087,27 @@ public static class ResourceRegistry
         {
             AppsOnly = true,
             Include = item => Text(item, "servicePrincipalType") == "Application" && !MicrosoftOwners.Contains(Text(item, "appOwnerOrganizationId")),
+            AdminRoles = [DirectoryRoles.ApplicationAdministrator, DirectoryRoles.CloudApplicationAdministrator],
+        },
+
+        // The source's own app registration: recreated with a new app ID, with its service principal's settings,
+        // owners and assignments read as for an enterprise app (its service principal under "servicePrincipal").
+        new ResourceType(
+            AppRegistration,
+            M365Service.Entra,
+            "App registration",
+            "v1.0/applications?$select=id,appId,displayName,description,signInAudience,identifierUris,web,spa,publicClient,isFallbackPublicClient,"
+                + "appRoles,optionalClaims,api,requiredResourceAccess,groupMembershipClaims,info,notes,tags,passwordCredentials,keyCredentials",
+            "displayName",
+            ["id", "appId", "passwordCredentials", "keyCredentials", "createdDateTime", "deletedDateTime", "publisherDomain"],
+            [
+                new("assignedUsers[].principalId", User) { OnRemove = RemoveBehavior.RemoveContainingItem },
+                new("assignedGroups[].principalId", Group) { OnRemove = RemoveBehavior.RemoveContainingItem },
+                new("owners[]", User),
+            ],
+            [])
+        {
+            AppsOnly = true,
             AdminRoles = [DirectoryRoles.ApplicationAdministrator, DirectoryRoles.CloudApplicationAdministrator],
         },
     ];

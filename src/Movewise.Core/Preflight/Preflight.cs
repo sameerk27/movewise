@@ -153,7 +153,16 @@ public static partial class PreflightCheck
 
         // 1. Objects with no match, and matches that no longer exist in the destination.
         progress?.Report("Checking your matches…");
-        var unresolved = plan.Items.Where(m => !m.IsResolved).ToList();
+        // Apps the destination doesn't have yet get their own finding: they're migrated in Applications, not here.
+        var missingApps = plan.Items.Where(m => !m.IsResolved && m.TargetType == ResourceRegistry.Application).ToList();
+        if (missingApps.Count > 0)
+        {
+            findings.Add(new Finding(Severity.Blocker,
+                $"{missingApps.Count} app{Plural(missingApps.Count)} not in {destinationInfo.DisplayName} yet",
+                "These policies point at apps the destination doesn't have. Migrate the apps in Applications first, then match again; or remove them from the policies on Map dependencies.",
+                missingApps.Select(m => $"{m.Source.DisplayName}: used by {string.Join(", ", m.UsedBy)}").ToList()));
+        }
+        var unresolved = plan.Items.Where(m => !m.IsResolved && m.TargetType != ResourceRegistry.Application).ToList();
         if (unresolved.Count > 0)
         {
             findings.Add(new Finding(Severity.Blocker,

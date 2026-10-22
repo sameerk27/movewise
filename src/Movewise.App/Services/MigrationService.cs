@@ -504,7 +504,8 @@ public sealed class MigrationService(AuthService auth, MigrationState state, Mov
         var source = state.Source ?? throw new InvalidOperationException("Sign in to the source tenant first.");
         var destination = state.Destination ?? throw new InvalidOperationException("Sign in to the destination tenant first.");
         var selected = state.Exported.Where(e => state.Selected.Contains(MigrationState.Key(e))).ToList();
-        var plan = await Matcher.BuildAsync(source.Graph, destination.Clients, selected, state.Exported, state.Mapping, progress, ct);
+        var plan = await Matcher.BuildAsync(source.Graph, destination.Clients, selected, state.Exported, state.Mapping, progress, ct,
+            MigratedAppIds(source, destination));
         EnsureSameTenants(source, destination);
         state.SetMapping(plan);
         DiagnosticLog.Info($"Matched {plan.Items.Count} objects, {plan.UnresolvedCount} without a match.");
@@ -528,6 +529,23 @@ public sealed class MigrationService(AuthService auth, MigrationState state, Mov
         state.SetPreflight(report);
         DiagnosticLog.Info($"Pre-flight: {report.CreateCount} to create, {report.SkipCount} skipped, {report.BlockedCount} blocked. Findings: " + string.Join("; ", report.Findings.Select(f => $"{f.Severity} {f.Title}")));
     });
+
+    /// <summary>
+    /// The app registrations Movewise migrated from this source into this destination (source app ID → destination
+    /// app ID), so policies can be matched to their new app IDs. A map that can't be read only costs that matching.
+    /// </summary>
+    internal IReadOnlyDictionary<string, string> MigratedAppIds(TenantConnection source, TenantConnection destination)
+    {
+        try
+        {
+            return AppIdMap.Load(destination.Info.TenantId, RunsRoot).For(source.Info.TenantId);
+        }
+        catch (Exception ex) when (ex is System.IO.IOException or System.Text.Json.JsonException or System.IO.InvalidDataException or UnauthorizedAccessException)
+        {
+            DiagnosticLog.Error("Couldn't read the app ID map.", ex);
+            return new Dictionary<string, string>();
+        }
+    }
 
     /// <summary>Discovery and matching take a while; a tenant signed out and another signed in meanwhile gets none of their results.</summary>
     void EnsureSameTenants(TenantConnection? source, TenantConnection? destination)

@@ -67,7 +67,7 @@
                     <ul class="plan-list">
                         @if (Report.CreateCount > 0)
                         {
-                            <li>@Report.CreateCount app@(Report.CreateCount == 1 ? " is" : "s are") created first, for the same app ID.</li>
+                            <li>@Report.CreateCount app@(Report.CreateCount == 1 ? " is" : "s are") created first: enterprise apps for the same app ID, app registrations with a new one.</li>
                         }
                         @if (Report.UpdateCount > 0)
                         {
@@ -160,7 +160,11 @@
                     <div class="row">
                         <span class="stack">
                             <span class="strong">@step.DisplayName</span>
-                            @if (step.DestinationId is not null)
+                            @if (step.AppId is not null)
+                            {
+                                <span class="muted small mono">app ID @step.AppId</span>
+                            }
+                            else if (step.DestinationId is not null)
                             {
                                 <span class="muted small mono">@step.DestinationId</span>
                             }

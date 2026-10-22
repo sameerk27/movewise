@@ -7,16 +7,19 @@ using Movewise.Core.Tenants;
 namespace Movewise.Core.Deploy;
 
 /// <summary>
-/// Migrates enterprise apps: creates each app's service principal (or updates the destination's), then adds its
-/// owners and assignments, and can take all of it out again. Only users and groups are given access to apps:
-/// API permissions are never granted, whatever the source had.
+/// Migrates apps: creates each enterprise app's service principal (or updates the destination's), recreates each app
+/// registration with a new app ID, then adds owners and assignments, and can take all of it out again. Only users and
+/// groups are given access to apps: API permissions are never granted, whatever the source had.
 /// </summary>
 public static class AppDeployer
 {
     const string ServicePrincipals = "v1.0/servicePrincipals";
+    const string Applications = "v1.0/applications";
 
-    // Recorded in a step's CreatedRules once its app exists (or has been updated), so a retry goes on to its access.
+    // Recorded in a step's CreatedRules: its app exists (or has been updated), so a retry goes on to its access;
+    // and a registration's application ID URI has been set.
     const string AppDone = "app";
+    const string UriDone = "uri";
     const string OwnerPrefix = "owner:";
     const string AssignmentPrefix = "assignment:";
 
@@ -26,23 +29,17 @@ public static class AppDeployer
         var steps = report.Apps
             .Where(a => a.Outcome == Outcome.Create)
             .OrderBy(a => a.Source.DisplayName, StringComparer.OrdinalIgnoreCase)
-            .Select(a =>
+            .Select(a => new DeployStep
             {
-                var settings = a.IsUpdate ? a.ChangedSettings : AppPreflight.CopiedSettings.Where(a.Desired.ContainsKey);
-                var body = SettingsDiff.Only(a.Desired, settings);
-                if (!a.IsUpdate)
-                    body["appId"] = a.AppId;
-                return new DeployStep
-                {
-                    Key = a.Key,
-                    TargetType = ResourceRegistry.EnterpriseApp,
-                    SourceId = a.Source.SourceId,
-                    DisplayName = a.Source.DisplayName,
-                    Body = body,
-                    Assignments = (JsonArray)a.Assignments.DeepClone(),
-                    Owners = (JsonArray)a.Owners.DeepClone(),
-                    UpdateOf = a.IsUpdate ? a.ExistingId : null,
-                };
+                Key = a.Key,
+                TargetType = a.Source.Type.Id,
+                SourceId = a.Source.SourceId,
+                DisplayName = a.Source.DisplayName,
+                Body = Body(a),
+                Assignments = (JsonArray)a.Assignments.DeepClone(),
+                Owners = (JsonArray)a.Owners.DeepClone(),
+                UpdateOf = a.IsUpdate ? a.ExistingId : null,
+                AppId = a.IsRegistration ? a.DestinationAppId : null,
             })
             .ToList();
 
@@ -60,12 +57,42 @@ public static class AppDeployer
     }
 
     /// <summary>
+    /// What's sent. An update: the service principal's settings that differ. A new enterprise app: its app ID and
+    /// settings. A new registration: the registration ("application"), its service principal's settings
+    /// ("servicePrincipal"), the source's app ID, and whether it had an application ID URI made from it ("apiUri").
+    /// </summary>
+    static JsonObject Body(AppResult app)
+    {
+        if (app.IsUpdate)
+        {
+            var settings = app.IsRegistration ? app.Desired["servicePrincipal"] as JsonObject ?? [] : app.Desired;
+            return SettingsDiff.Only(settings, app.ChangedSettings);
+        }
+        if (!app.IsRegistration)
+        {
+            var body = SettingsDiff.Only(app.Desired, AppPreflight.CopiedSettings.Where(app.Desired.ContainsKey));
+            body["appId"] = app.AppId;
+            return body;
+        }
+        var principal = app.Desired["servicePrincipal"] as JsonObject ?? [];
+        return new JsonObject
+        {
+            ["application"] = SettingsDiff.Only(app.Desired, AppPreflight.CopiedRegistrationSettings.Where(app.Desired.ContainsKey)),
+            ["servicePrincipal"] = SettingsDiff.Only(principal, AppPreflight.CopiedSettings.Where(principal.ContainsKey)),
+            ["sourceAppId"] = app.AppId,
+            ["apiUri"] = AppPreflight.Strings(app.Desired["identifierUris"]).Contains($"api://{app.AppId}", StringComparer.OrdinalIgnoreCase),
+        };
+    }
+
+    /// <summary>
     /// Creates or updates every app that isn't finished, then gives each its owners and assignments, so every app
     /// exists before anyone is given access. Safe to call again: each app, owner and assignment is recorded once
-    /// made, an interrupted create is looked up by app ID first, and a step that fails doesn't stop the rest.
+    /// made, an interrupted create is looked up first, and a step that fails doesn't stop the rest.
     /// </summary>
     /// <param name="ct">Stops between apps, owners and assignments; the request in progress is always finished first.</param>
-    public static async Task RunAsync(IGraphWriter graph, DeployRun run, Func<Task> save, Action<DeployStep>? changed = null, CancellationToken ct = default)
+    /// <param name="appIds">Where each recreated registration's new app ID is recorded, for the policy migration to find.</param>
+    public static async Task RunAsync(IGraphWriter graph, DeployRun run, Func<Task> save, Action<DeployStep>? changed = null, CancellationToken ct = default,
+        AppIdMap? appIds = null)
     {
         if (run.RolledBack is not null)
             throw new InvalidOperationException("This run was rolled back. Start a new deployment instead.");
@@ -75,7 +102,7 @@ public static class AppDeployer
         foreach (var step in run.Steps.Where(s => s.IsUnfinished && !s.CreatedRules.Contains(AppDone)).ToList())
         {
             ct.ThrowIfCancellationRequested();
-            await AppAsync(graph, step, Saver(step, save, changed));
+            await AppAsync(graph, run, step, Saver(step, save, changed), appIds);
         }
         foreach (var step in run.Steps.Where(s => s.IsUnfinished && s.CreatedRules.Contains(AppDone)).ToList())
         {
@@ -102,8 +129,17 @@ public static class AppDeployer
         await save();
     }
 
-    /// <summary>Creates the app's service principal, or changes the existing one's settings.</summary>
-    static async Task AppAsync(IGraphWriter graph, DeployStep step, Func<Task> save)
+    static bool IsRegistration(DeployStep step) => step.TargetType == ResourceRegistry.AppRegistration;
+
+    /// <summary>The service principal assignments are made on: a registration's own, or the enterprise app itself.</summary>
+    static string PrincipalId(DeployStep step) => step.ServicePrincipalId ?? step.DestinationId!;
+
+    /// <summary>Where owners are added: a registration's owners are the registration's.</summary>
+    static string OwnersPath(DeployStep step) =>
+        IsRegistration(step) ? $"{Applications}/{Uri.EscapeDataString(step.DestinationId!)}" : ItemPath(step.DestinationId!);
+
+    /// <summary>Creates the app, or changes the existing one's settings.</summary>
+    static async Task AppAsync(IGraphWriter graph, DeployRun run, DeployStep step, Func<Task> save, AppIdMap? appIds)
     {
         var none = CancellationToken.None;
         try
@@ -115,13 +151,28 @@ public static class AppDeployer
                 {
                     var current = await graph.GetObjectAsync($"{ItemPath(existingId)}?$select={string.Join(",", AppPreflight.CopiedSettings)}", none);
                     step.Previous = SettingsDiff.Only(Normalizer.Canonicalize(current)!.AsObject(), step.Body.Select(p => p.Key));
-                    step.DestinationId = existingId;
+                    if (IsRegistration(step))
+                    {
+                        step.ServicePrincipalId = existingId;
+                        step.DestinationId = await RegistrationIdAsync(graph, step.AppId!, none)
+                            ?? throw new InvalidOperationException("Its registration is no longer in the destination.");
+                    }
+                    else
+                    {
+                        step.DestinationId = existingId;
+                    }
                 }
                 await Finish(step, StepStatus.Creating, null, save);
                 if (step.Body.Count > 0)
                     await graph.PatchAsync(ItemPath(existingId), step.Body.DeepClone(), none);
                 step.CreatedRules.Add(AppDone);
                 await Finish(step, StepStatus.Created, null, save);
+                return;
+            }
+
+            if (IsRegistration(step))
+            {
+                await RegistrationAsync(graph, run, step, save, appIds);
                 return;
             }
 
@@ -158,8 +209,93 @@ public static class AppDeployer
         }
         catch (Exception ex)
         {
-            await Finish(step, StepStatus.Failed, step.UpdateOf is null ? ex.Message : $"Not updated: {ex.Message}", save);
+            await Finish(step, StepStatus.Failed,
+                step.UpdateOf is not null ? $"Not updated: {ex.Message}"
+                : step.DestinationId is not null ? $"Created, but something after that failed: {ex.Message}"
+                : ex.Message, save);
         }
+    }
+
+    /// <summary>
+    /// Recreates an app registration: the registration (which gets a new app ID), its application ID URI made from the
+    /// new app ID, then its service principal. The new app ID is recorded in the app ID map as soon as the service
+    /// principal exists. Each part is kept on the step once made, so a retry does only the rest.
+    /// </summary>
+    static async Task RegistrationAsync(IGraphWriter graph, DeployRun run, DeployStep step, Func<Task> save, AppIdMap? appIds)
+    {
+        var none = CancellationToken.None;
+        if (step.DestinationId is null)
+        {
+            // An interrupted create: the registration is looked for by name, made after the request was sent.
+            if (step.Status == StepStatus.Creating)
+            {
+                var found = await FindRegistrationsAsync(graph, step, none);
+                if (found.Count > 1)
+                {
+                    step.Message = "More than one registration in the destination has this name and was made during this run, so Movewise can't tell which is its own. Delete the extra one in the admin center, then retry.";
+                    await save();
+                    return;
+                }
+                if (found.Count == 1)
+                {
+                    (step.DestinationId, step.AppId) = found[0];
+                    step.Notes.Add("Found in the destination after an interrupted run, and used instead of creating it again.");
+                }
+            }
+            if (step.DestinationId is null)
+            {
+                step.CreateSent = DateTimeOffset.UtcNow;
+                await Finish(step, StepStatus.Creating, null, save);
+                try
+                {
+                    var created = await graph.PostAsync(Applications, step.Body["application"]!.DeepClone(), none);
+                    step.AppId = created?["appId"]?.GetValue<string>();
+                    step.DestinationId = created?["id"]?.GetValue<string>()
+                        ?? throw new InvalidOperationException("Microsoft Graph didn't return the new registration's ID.");
+                }
+                catch (Exception ex) when (Deployer.IsUncertain(ex, none))
+                {
+                    step.Message = $"No answer from Microsoft 365, so it may or may not have been created. Retry to check. ({ex.Message})";
+                    await save();
+                    return;
+                }
+                await save();
+            }
+        }
+        step.AppId ??= (await graph.GetObjectAsync($"{Applications}/{Uri.EscapeDataString(step.DestinationId)}?$select=appId", none))["appId"]?.GetValue<string>()
+            ?? throw new InvalidOperationException("Microsoft Graph didn't return the new app ID.");
+
+        if (step.Body["apiUri"]?.GetValue<bool>() == true && !step.CreatedRules.Contains(UriDone))
+        {
+            await graph.PatchAsync($"{Applications}/{Uri.EscapeDataString(step.DestinationId)}",
+                new JsonObject { ["identifierUris"] = new JsonArray($"api://{step.AppId}") }, none);
+            step.CreatedRules.Add(UriDone);
+            await save();
+        }
+
+        // Its app ID is new, so any service principal for it is this run's.
+        if (step.ServicePrincipalId is null)
+        {
+            step.ServicePrincipalId = await FindAsync(graph, step.AppId, none);
+            if (step.ServicePrincipalId is null)
+            {
+                var body = (JsonObject)(step.Body["servicePrincipal"]?.DeepClone() ?? new JsonObject());
+                body["appId"] = step.AppId;
+                var created = await graph.PostAsync(ServicePrincipals, body, none);
+                step.ServicePrincipalId = created?["id"]?.GetValue<string>()
+                    ?? throw new InvalidOperationException("Microsoft Graph didn't return the new service principal's ID.");
+            }
+            await save();
+        }
+
+        var sourceAppId = step.Body["sourceAppId"]?.GetValue<string>() ?? "";
+        if (appIds is not null)
+            await appIds.RecordAsync(new AppIdEntry(run.SourceTenantId, sourceAppId, step.AppId, step.DisplayName, run.RunId, DateTimeOffset.Now));
+        var note = $"New app ID {step.AppId} (it was {sourceAppId}). Change anything that signs in with the old one.";
+        if (!step.Notes.Contains(note))
+            step.Notes.Add(note);
+        step.CreatedRules.Add(AppDone);
+        await Finish(step, StepStatus.Created, null, save);
     }
 
     /// <summary>
@@ -170,14 +306,14 @@ public static class AppDeployer
     static async Task AccessAsync(IGraphWriter graph, DeployStep step, Func<Task> save, CancellationToken ct)
     {
         var none = CancellationToken.None;
-        var id = step.DestinationId!;
+        var principal = PrincipalId(step);
         var isNew = step.UpdateOf is null;
         try
         {
             var owners = AppPreflight.Strings(step.Owners);
             if (owners.Any(o => !Recorded(step, OwnerPrefix + o)))
             {
-                var present = (await graph.GetCollectionAsync($"{ItemPath(id)}/owners?$select=id", none))
+                var present = (await graph.GetCollectionAsync($"{OwnersPath(step)}/owners?$select=id", none))
                     .Select(o => o["id"]?.GetValue<string>()).OfType<string>().ToHashSet(StringComparer.OrdinalIgnoreCase);
                 foreach (var owner in owners.Where(o => !Recorded(step, OwnerPrefix + o)))
                 {
@@ -192,7 +328,7 @@ public static class AppDeployer
                     {
                         step.PendingAssignment = key;
                         await save();
-                        await graph.PostAsync($"{ItemPath(id)}/owners/$ref",
+                        await graph.PostAsync($"{OwnersPath(step)}/owners/$ref",
                             new JsonObject { ["@odata.id"] = $"https://graph.microsoft.com/v1.0/directoryObjects/{owner}" }, none);
                         step.CreatedAssignments.Add(key);
                     }
@@ -204,7 +340,7 @@ public static class AppDeployer
             var assignments = (step.Assignments ?? []).OfType<JsonObject>().ToList();
             if (assignments.Any(a => !Recorded(step, AssignmentPrefix + Who(a))))
             {
-                var present = (await graph.GetCollectionAsync($"{ItemPath(id)}/appRoleAssignedTo", none))
+                var present = (await graph.GetCollectionAsync($"{ItemPath(principal)}/appRoleAssignedTo", none))
                     .GroupBy(a => $"{a["principalId"]?.GetValue<string>()}|{a["appRoleId"]?.GetValue<string>()}", StringComparer.OrdinalIgnoreCase)
                     .ToDictionary(g => g.Key, g => g.First()["id"]?.GetValue<string>(), StringComparer.OrdinalIgnoreCase);
                 foreach (var assignment in assignments.Where(a => !Recorded(step, AssignmentPrefix + Who(a))))
@@ -220,10 +356,10 @@ public static class AppDeployer
                     {
                         step.PendingAssignment = AssignmentPrefix + who;
                         await save();
-                        var created = await graph.PostAsync($"{ItemPath(id)}/appRoleAssignedTo", new JsonObject
+                        var created = await graph.PostAsync($"{ItemPath(principal)}/appRoleAssignedTo", new JsonObject
                         {
                             ["principalId"] = assignment["principalId"]?.DeepClone(),
-                            ["resourceId"] = id,
+                            ["resourceId"] = principal,
                             ["appRoleId"] = assignment["appRoleId"]?.DeepClone(),
                         }, none);
                         step.CreatedAssignments.Add($"{AssignmentPrefix}{who}|{created?["id"]?.GetValue<string>()}");
@@ -261,10 +397,12 @@ public static class AppDeployer
     }
 
     /// <summary>
-    /// Takes out what the run made, newest first: apps it created are deleted (Entra ID keeps deleted apps for 30 days),
-    /// and apps it updated get their settings put back and lose only the owners and assignments it added.
+    /// Takes out what the run made, newest first: apps and registrations it created are deleted (Entra ID keeps
+    /// deleted apps for 30 days) and their new app IDs taken out of the app ID map; apps it updated get their settings
+    /// put back and lose only the owners and assignments it added.
     /// </summary>
-    public static async Task RollbackAsync(IGraphWriter graph, DeployRun run, Func<Task> save, Action<DeployStep>? changed = null, CancellationToken ct = default)
+    public static async Task RollbackAsync(IGraphWriter graph, DeployRun run, Func<Task> save, Action<DeployStep>? changed = null, CancellationToken ct = default,
+        AppIdMap? appIds = null)
     {
         if (run.Kind != RunKind.Applications)
             throw new InvalidOperationException("This run migrated policies. Roll it back in Migrations.");
@@ -284,7 +422,7 @@ public static class AppDeployer
                     foreach (var entry in step.CreatedAssignments.ToList())
                     {
                         var path = entry.StartsWith(OwnerPrefix, StringComparison.Ordinal)
-                            ? $"{ItemPath(updatedId)}/owners/{Uri.EscapeDataString(entry[OwnerPrefix.Length..])}/$ref"
+                            ? $"{OwnersPath(step)}/owners/{Uri.EscapeDataString(entry[OwnerPrefix.Length..])}/$ref"
                             : entry.Split('|') is [_, _, { Length: > 0 } assignmentId]
                                 ? $"{ItemPath(updatedId)}/appRoleAssignedTo/{Uri.EscapeDataString(assignmentId)}"
                                 : null;
@@ -317,7 +455,20 @@ public static class AppDeployer
                 // An interrupted create: delete it only if it's clearly there.
                 try
                 {
-                    step.DestinationId = await FindAsync(graph, step.Body["appId"]?.GetValue<string>() ?? "", none);
+                    if (IsRegistration(step))
+                    {
+                        var found = await FindRegistrationsAsync(graph, step, none);
+                        if (found.Count > 1)
+                        {
+                            await Finish(step, StepStatus.RollbackFailed, "Check the destination by hand: more than one registration with this name was made during this run.", stepSave);
+                            continue;
+                        }
+                        step.DestinationId = found.Count == 1 ? found[0].Id : null;
+                    }
+                    else
+                    {
+                        step.DestinationId = await FindAsync(graph, step.Body["appId"]?.GetValue<string>() ?? "", none);
+                    }
                 }
                 catch (Exception ex) when (ex is not OperationCanceledException)
                 {
@@ -335,13 +486,20 @@ public static class AppDeployer
 
             try
             {
-                // Its owners and assignments go with it.
-                await graph.DeleteAsync(ItemPath(step.DestinationId), none);
-                await Finish(step, StepStatus.RolledBack, "Deleted from the destination, with its owners and assignments. Entra ID keeps it in deleted apps for 30 days.", stepSave);
-            }
-            catch (Exception ex) when (Deployer.IsNotFound(ex))
-            {
-                await Finish(step, StepStatus.RolledBack, "Already gone from the destination.", stepSave);
+                // Deleting a registration deletes its service principal; owners and assignments go with the app.
+                var path = IsRegistration(step) ? $"{Applications}/{Uri.EscapeDataString(step.DestinationId)}" : ItemPath(step.DestinationId);
+                try
+                {
+                    await graph.DeleteAsync(path, none);
+                    step.Message = "Deleted from the destination, with its owners and assignments. Entra ID keeps it in deleted apps for 30 days.";
+                }
+                catch (Exception ex) when (Deployer.IsNotFound(ex))
+                {
+                    step.Message = "Already gone from the destination.";
+                }
+                if (IsRegistration(step) && appIds is not null)
+                    await appIds.RemoveAsync(run.SourceTenantId, step.Body["sourceAppId"]?.GetValue<string>() ?? "", run.RunId);
+                await Finish(step, StepStatus.RolledBack, step.Message, stepSave);
             }
             catch (Exception ex) when (ex is not OperationCanceledException)
             {
@@ -359,6 +517,30 @@ public static class AppDeployer
     {
         var page = await graph.GetObjectAsync(GraphQuery.Where(ServicePrincipals, $"appId eq {GraphQuery.Literal(appId)}", "id", top: 5), ct);
         return page["value"]?.AsArray().OfType<JsonObject>().Select(o => o["id"]?.GetValue<string>()).FirstOrDefault(i => !string.IsNullOrEmpty(i));
+    }
+
+    /// <summary>The destination's registration for an app ID, or null.</summary>
+    static async Task<string?> RegistrationIdAsync(IGraphReader graph, string appId, CancellationToken ct)
+    {
+        var page = await graph.GetObjectAsync(GraphQuery.Where(Applications, $"appId eq {GraphQuery.Literal(appId)}", "id", top: 1), ct);
+        return page["value"]?.AsArray().OfType<JsonObject>().Select(o => o["id"]?.GetValue<string>()).FirstOrDefault(i => !string.IsNullOrEmpty(i));
+    }
+
+    /// <summary>
+    /// Registrations with this step's name made since its create request was sent. One that was there before isn't
+    /// this run's, whatever its name; five minutes' leeway covers a difference between this PC's clock and Microsoft's.
+    /// </summary>
+    static async Task<IReadOnlyList<(string Id, string? AppId)>> FindRegistrationsAsync(IGraphReader graph, DeployStep step, CancellationToken ct)
+    {
+        var page = await graph.GetObjectAsync(GraphQuery.Where(Applications, $"displayName eq {GraphQuery.Literal(step.DisplayName)}", "id,appId,createdDateTime", top: 10), ct);
+        var since = step.CreateSent?.AddMinutes(-5);
+        return (page["value"]?.AsArray().OfType<JsonObject>() ?? [])
+            .Where(a => since is null || a["createdDateTime"] is not JsonValue created
+                || !DateTimeOffset.TryParse(created.GetValue<string>(), System.Globalization.CultureInfo.InvariantCulture, System.Globalization.DateTimeStyles.AssumeUniversal, out var at)
+                || at >= since)
+            .Select(a => (a["id"]?.GetValue<string>() ?? "", a["appId"]?.GetValue<string>()))
+            .Where(a => a.Item1.Length > 0)
+            .ToList();
     }
 
     static bool Recorded(DeployStep step, string key) =>

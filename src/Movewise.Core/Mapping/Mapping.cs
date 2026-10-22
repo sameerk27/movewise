@@ -16,6 +16,9 @@ public enum MatchKind
     SameAppId,
     CreatedByMigration,
 
+    /// <summary>An app registration Movewise migrated to the destination, where it has a new app ID (see the app ID map).</summary>
+    MigratedApp,
+
     /// <summary>Outside the source tenant (a partner's domain or address), so it's kept as it is.</summary>
     External,
 
@@ -171,6 +174,7 @@ public static class MappingNames
         MatchKind.SameUsername => "Auto · same username",
         MatchKind.SameAppId => "Same app",
         MatchKind.CreatedByMigration => "Migrated with policies",
+        MatchKind.MigratedApp => "Migrated by Movewise",
         MatchKind.External => "External · kept",
         MatchKind.InitialDomain => "Auto · .onmicrosoft.com",
         MatchKind.SamePath => "Auto · same path",

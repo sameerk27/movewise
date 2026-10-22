@@ -213,6 +213,19 @@ public class PreflightTests
     }
 
     [Fact]
+    public async Task An_app_missing_from_the_destination_is_its_own_blocker_pointing_at_Applications()
+    {
+        var app = new Mapping.Mapping { TargetType = ResourceRegistry.Application, Source = new ObjectRef("app-hr", "Contoso HR Portal"), UsedBy = ["CA005"] };
+
+        var report = await PreflightCheck.RunAsync(EmptyDestination(), Destination([DirectoryRoles.GlobalAdministrator], "AAD_PREMIUM"), [Simple], Plan(app), new PreflightChoices());
+
+        var finding = Assert.Single(report.Findings, f => f.Severity == Severity.Blocker && f.Title.Contains("not in", StringComparison.Ordinal));
+        Assert.Contains("Applications", finding.Detail);
+        Assert.Equal("Contoso HR Portal: used by CA005", Assert.Single(finding.Items));
+        Assert.DoesNotContain(report.Findings, f => f.Title.Contains("with no match", StringComparison.Ordinal));
+    }
+
+    [Fact]
     public async Task A_clean_policy_is_created_in_report_only()
     {
         var report = await PreflightCheck.RunAsync(EmptyDestination(), Destination([DirectoryRoles.GlobalAdministrator], "AAD_PREMIUM"), [Simple], Plan(), new PreflightChoices());

@@ -132,9 +132,13 @@ sealed class DemoGraph : IGraphWriter
                     created["policyType"] = "custom";
                 if (basePath.Equals("v1.0/servicePrincipals", StringComparison.OrdinalIgnoreCase) && created["displayName"] is null)
                 {
-                    created["displayName"] = _appNames.GetValueOrDefault(Text(created, "appId"), Text(created, "appId"));
+                    var registration = Items("v1.0/applications").FirstOrDefault(a => Text(a, "appId") == Text(created, "appId"));
+                    created["displayName"] = registration is not null ? Text(registration, "displayName") : _appNames.GetValueOrDefault(Text(created, "appId"), Text(created, "appId"));
                     created["servicePrincipalType"] = "Application";
                 }
+                // A new registration gets a new app ID.
+                if (basePath.Equals("v1.0/applications", StringComparison.OrdinalIgnoreCase))
+                    created["appId"] = Guid.NewGuid().ToString();
                 list.Add(created);
                 return Visible(created);
             }

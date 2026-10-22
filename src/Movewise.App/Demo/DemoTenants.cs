@@ -12,7 +12,8 @@ namespace Movewise.App.Demo;
 /// Two made-up tenants, Contoso (source) and Fabrikam (destination), for trying Movewise without real tenants.
 /// They're built so every screen has something to show: a name conflict, a missing license, a group with no match,
 /// a domain to map, an address that isn't in the destination, sublabels, Teams group assignments, and enterprise apps
-/// (one already in the destination, one assigned to a group with no match, one with SAML to set up by hand).
+/// (one already in the destination, one assigned to a group with no match, one with SAML to set up by hand) and app
+/// registrations (one a Conditional Access policy uses, one a daemon with a client secret).
 /// Everything stays in memory; deploying changes only the demo destination.
 /// </summary>
 static class DemoTenants
@@ -49,6 +50,11 @@ static class DemoTenants
         ("c1000000-0000-4000-8000-000000000004", "DocuSign"),
     ];
     const string ZoomAdminRole = "d1000000-0000-4000-8000-000000000001";
+
+    // Contoso's own app registrations: new app IDs in the destination.
+    const string HrPortalApp = "c2000000-0000-4000-8000-000000000001";
+    const string PayrollApp = "c2000000-0000-4000-8000-000000000002";
+    const string HrAdminRole = "e1000000-0000-4000-8000-000000000001";
 
     public static (TenantConnection Source, TenantConnection Destination) Create() =>
         (Connection(TenantRole.Source, Contoso(), SourceGraph(), SourceExchange(), SourceCompliance(), SourceTeams()),
@@ -158,9 +164,36 @@ static class DemoTenants
               "appRoleAssignmentRequired": false, "preferredSingleSignOnMode": "saml", "loginUrl": "https://account.docusign.com",
               "tags": ["WindowsAzureActiveDirectoryIntegratedApp"], "keyCredentials": [ { "keyId": "k1", "usage": "Sign" }, { "keyId": "k2", "usage": "Verify" } ],
               "__appRoleAssignedTo": [ { "id": "d1", "principalType": "Group", "principalId": "{{IntunePilot}}", "appRoleId": "{{DefaultRole}}" } ] }
+            """),
+            // The registrations' own service principals.
+            J($$"""
+            { "id": "a7000000-0000-4000-8000-000000000005", "appId": "{{HrPortalApp}}", "displayName": "Contoso HR Portal", "appOwnerOrganizationId": "{{SourceTenantId}}",
+              "servicePrincipalType": "Application", "accountEnabled": true, "appRoleAssignmentRequired": true, "tags": ["WindowsAzureActiveDirectoryIntegratedApp"],
+              "__appRoleAssignedTo": [ { "id": "h1", "principalType": "Group", "principalId": "{{AllStaff}}", "appRoleId": "{{DefaultRole}}" },
+                                       { "id": "h2", "principalType": "User", "principalId": "{{Anna}}", "appRoleId": "{{HrAdminRole}}" } ] }
+            """),
+            J($$"""
+            { "id": "a7000000-0000-4000-8000-000000000006", "appId": "{{PayrollApp}}", "displayName": "Payroll Sync", "appOwnerOrganizationId": "{{SourceTenantId}}",
+              "servicePrincipalType": "Application", "accountEnabled": true, "appRoleAssignmentRequired": false,
+              "__appRoleAssignments": [ { "id": "p2", "resourceId": "a7000000-0000-4000-8000-000000000000", "resourceDisplayName": "Microsoft Graph", "appRoleId": "{{UserReadAll}}" } ] }
             """))
-        .Add("v1.0/oauth2PermissionGrants", J("""
-            { "id": "g1", "clientId": "a7000000-0000-4000-8000-000000000001", "resourceId": "a7000000-0000-4000-8000-000000000000", "consentType": "AllPrincipals", "scope": "openid profile email User.Read" }
+        .Add("v1.0/oauth2PermissionGrants",
+            J("""{ "id": "g1", "clientId": "a7000000-0000-4000-8000-000000000001", "resourceId": "a7000000-0000-4000-8000-000000000000", "consentType": "AllPrincipals", "scope": "openid profile email User.Read" }"""),
+            J("""{ "id": "g2", "clientId": "a7000000-0000-4000-8000-000000000005", "resourceId": "a7000000-0000-4000-8000-000000000000", "consentType": "AllPrincipals", "scope": "User.Read Group.Read.All" }"""))
+        .Add("v1.0/applications",
+            J($$"""
+            { "id": "a8000000-0000-4000-8000-000000000001", "appId": "{{HrPortalApp}}", "displayName": "Contoso HR Portal", "signInAudience": "AzureADMyOrg",
+              "identifierUris": ["api://{{HrPortalApp}}"],
+              "web": { "redirectUris": ["https://hr.contoso.com/signin-oidc"], "homePageUrl": "https://hr.contoso.com", "implicitGrantSettings": { "enableIdTokenIssuance": true, "enableAccessTokenIssuance": false } },
+              "appRoles": [ { "id": "{{HrAdminRole}}", "value": "HR.Admin", "displayName": "HR admins", "description": "Can manage HR records.", "allowedMemberTypes": ["User"], "isEnabled": true } ],
+              "requiredResourceAccess": [ { "resourceAppId": "{{GraphApp}}", "resourceAccess": [ { "id": "e1fe6dd8-ba31-4d61-89e7-88639da4683d", "type": "Scope" }, { "id": "5f8c59db-677d-491f-a6b8-5f174b11ec1d", "type": "Scope" } ] } ],
+              "passwordCredentials": [], "keyCredentials": [],
+              "__owners": [ { "@odata.type": "#microsoft.graph.user", "id": "{{Anna}}" } ] }
+            """),
+            J($$"""
+            { "id": "a8000000-0000-4000-8000-000000000002", "appId": "{{PayrollApp}}", "displayName": "Payroll Sync", "signInAudience": "AzureADMyOrg",
+              "requiredResourceAccess": [ { "resourceAppId": "{{GraphApp}}", "resourceAccess": [ { "id": "{{UserReadAll}}", "type": "Role" } ] } ],
+              "passwordCredentials": [ { "keyId": "p1", "displayName": "Payroll job" } ], "keyCredentials": [] }
             """))
 
         // Entra ID
@@ -201,6 +234,14 @@ static class DemoTenants
                 "users": { "includeRoles": ["62e90394-69f5-4237-9190-012177145e10"], "excludeUsers": ["{{BreakGlassUser}}"] },
                 "applications": { "includeApplications": ["All"] } },
               "grantControls": { "operator": "AND", "authenticationStrength": { "id": "{{Strength}}", "displayName": "Phishing-resistant plus" } } }
+            """),
+            // Uses Contoso's own app registration, which has a new app ID once migrated in Applications.
+            J($$"""
+            { "id": "c5", "displayName": "CA005 - Require MFA for the HR Portal", "state": "enabled",
+              "conditions": { "clientAppTypes": ["all"],
+                "users": { "includeUsers": [], "includeGroups": ["{{AllStaff}}"], "excludeGroups": ["{{BreakGlass}}"] },
+                "applications": { "includeApplications": ["{{HrPortalApp}}"] } },
+              "grantControls": { "operator": "OR", "builtInControls": ["mfa"] } }
             """))
 
         // Intune

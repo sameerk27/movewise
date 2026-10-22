@@ -31,6 +31,9 @@ public sealed record AppResult(ExportedResource Source, JsonObject Desired, Outc
     /// <summary>The destination's service principal for the same app, when it already has one.</summary>
     public string? ExistingId { get; init; }
 
+    /// <summary>For an app registration migrated before: its app ID in the destination (see the app ID map).</summary>
+    public string? DestinationAppId { get; init; }
+
     /// <summary>For an app updated in place: the settings whose value differs, and so will be changed.</summary>
     public IReadOnlyList<string> ChangedSettings { get; init; } = [];
 
@@ -46,6 +49,7 @@ public sealed record AppResult(ExportedResource Source, JsonObject Desired, Outc
     public string Key => MappingPlan.KeyOf(Source.Type.Id, Source.SourceId);
     public string AppId => Source.Settings["appId"]?.GetValue<string>() ?? "";
     public bool IsUpdate => ExistingId is not null && Outcome == Outcome.Create;
+    public bool IsRegistration => Source.Type.Id == ResourceRegistry.AppRegistration;
 }
 
 public sealed record AppPreflightReport(IReadOnlyList<AppResult> Apps, IReadOnlyList<Finding> Findings)
@@ -76,6 +80,16 @@ public static class AppPreflight
         "notificationEmailAddresses", "tags",
     ];
 
+    /// <summary>
+    /// An app registration's own settings that are copied when it's recreated. Its app ID and application ID URI are
+    /// new, and its secrets, certificates and pre-authorized apps can't be copied.
+    /// </summary>
+    public static IReadOnlyList<string> CopiedRegistrationSettings { get; } =
+    [
+        "displayName", "description", "signInAudience", "web", "spa", "publicClient", "isFallbackPublicClient", "appRoles",
+        "optionalClaims", "api", "requiredResourceAccess", "groupMembershipClaims", "info", "notes", "tags",
+    ];
+
     const string Select = "id,appId,displayName,accountEnabled,appRoleAssignmentRequired,description,homepage,loginUrl,logoutUrl,notes,notificationEmailAddresses,tags";
 
     public static async Task<AppPreflightReport> RunAsync(
@@ -85,7 +99,8 @@ public static class AppPreflight
         MappingPlan plan,
         AppPreflightChoices choices,
         IProgress<string>? progress = null,
-        CancellationToken ct = default)
+        CancellationToken ct = default,
+        IReadOnlyDictionary<string, string>? migratedAppIds = null)
     {
         var graph = destination.Graph;
         var results = new List<AppResult>();
@@ -101,6 +116,7 @@ public static class AppPreflight
                 []));
         }
 
+        var sameName = new List<string>();
         var done = 0;
         foreach (var app in apps)
         {
@@ -111,13 +127,17 @@ public static class AppPreflight
             var desired = transformed.Desired;
             var appId = app.Settings["appId"]?.GetValue<string>() ?? "";
 
-            var existing = await FindAsync(graph, appId, ct);
+            // A registration is recreated with a new app ID, so it's only "already there" when Movewise migrated it before.
+            var isRegistration = app.Type.Id == ResourceRegistry.AppRegistration;
+            var destinationAppId = isRegistration ? migratedAppIds?.GetValueOrDefault(appId) : appId;
+            var existing = destinationAppId is null ? null : await FindAsync(graph, destinationAppId, ct);
             var assignments = Assignments(desired);
             var owners = Strings(desired["owners"]);
+            var already = isRegistration ? $"Migrated before: it's in {destinationName} with app ID {destinationAppId}." : $"Already in {destinationName}.";
 
             if (existing is not null && choices.ExistingApps == ExistingAppChoice.Skip)
             {
-                results.Add(new AppResult(app, desired, Outcome.Skip, [$"Already in {destinationName}. Skipped, as chosen."]) { ExistingId = Text(existing, "id") });
+                results.Add(new AppResult(app, desired, Outcome.Skip, [$"{already} Skipped, as chosen."]) { ExistingId = Text(existing, "id"), DestinationAppId = destinationAppId });
                 continue;
             }
             if (transformed.Problems.Count > 0)
@@ -127,7 +147,9 @@ public static class AppPreflight
             }
             if (existing is null)
             {
-                results.Add(new AppResult(app, desired, Outcome.Create, [])
+                if (isRegistration && await NameTakenAsync(graph, app.DisplayName, ct))
+                    sameName.Add(app.DisplayName);
+                results.Add(new AppResult(app, desired, Outcome.Create, isRegistration ? ["Created with a new app ID."] : [])
                 {
                     Assignments = assignments,
                     Owners = new JsonArray(owners.Select(o => (JsonNode?)o).ToArray()),
@@ -138,10 +160,15 @@ public static class AppPreflight
 
             // Already there, and to be updated: only what differs is changed, and only missing owners and assignments added.
             var id = Text(existing, "id");
+            var desiredSettings = isRegistration ? desired["servicePrincipal"] as JsonObject ?? [] : desired;
             var changed = CopiedSettings
-                .Where(name => desired.ContainsKey(name) && !SettingsDiff.Same(desired[name], existing[name]))
+                .Where(name => desiredSettings.ContainsKey(name) && !SettingsDiff.Same(desiredSettings[name], existing[name]))
                 .ToList();
             var path = $"v1.0/servicePrincipals/{Uri.EscapeDataString(id)}";
+            // A registration's owners are the registration's, not its service principal's.
+            var ownersPath = isRegistration && await RegistrationIdAsync(graph, destinationAppId!, ct) is { } registrationId
+                ? $"v1.0/applications/{Uri.EscapeDataString(registrationId)}"
+                : path;
             var present = (await graph.GetCollectionAsync($"{path}/appRoleAssignedTo", ct))
                 .Select(a => (Text(a, "principalId"), Text(a, "appRoleId")))
                 .ToHashSet();
@@ -149,17 +176,19 @@ public static class AppPreflight
                 .Where(a => !present.Contains((Text(a, "principalId"), Text(a, "appRoleId"))))
                 .Select(a => (JsonNode?)a.DeepClone())
                 .ToArray());
-            var presentOwners = (await graph.GetCollectionAsync($"{path}/owners?$select=id", ct)).Select(o => Text(o, "id")).ToHashSet(StringComparer.OrdinalIgnoreCase);
+            var presentOwners = (await graph.GetCollectionAsync($"{ownersPath}/owners?$select=id", ct)).Select(o => Text(o, "id")).ToHashSet(StringComparer.OrdinalIgnoreCase);
             var missingOwners = owners.Where(o => !presentOwners.Contains(o)).ToList();
 
             if (changed.Count == 0 && missingAssignments.Count == 0 && missingOwners.Count == 0)
             {
-                results.Add(new AppResult(app, desired, Outcome.Skip, [$"Already in {destinationName}, with the same settings, owners and assignments."]) { ExistingId = id });
+                results.Add(new AppResult(app, desired, Outcome.Skip, [$"{already} Its settings, owners and assignments are the same."]) { ExistingId = id, DestinationAppId = destinationAppId });
                 continue;
             }
-            results.Add(new AppResult(app, desired, Outcome.Create, [$"Already in {destinationName}. Updated in place: nothing is taken away."])
+            results.Add(new AppResult(app, desired, Outcome.Create,
+                [$"{already} Updated in place: nothing is taken away.{(isRegistration ? " Its registration settings are left as they are." : "")}"])
             {
                 ExistingId = id,
+                DestinationAppId = destinationAppId,
                 ChangedSettings = changed,
                 Assignments = missingAssignments,
                 Owners = new JsonArray(missingOwners.Select(o => (JsonNode?)o).ToArray()),
@@ -168,6 +197,13 @@ public static class AppPreflight
         }
 
         AddFindings(results, findings, destinationInfo, choices);
+        if (sameName.Count > 0)
+        {
+            findings.Add(new Finding(Severity.Warning,
+                $"Same name already in {destinationName} · {sameName.Count} registration{Plural(sameName.Count)}",
+                "Another registration has this name there. A new one is created beside it, with its own app ID; nothing is merged.",
+                sameName));
+        }
         var report = new AppPreflightReport(results, findings);
         return report with { BlockedSkipped = choices.SkipBlocked && report.BlockedCount > 0 };
     }
@@ -198,6 +234,15 @@ public static class AppPreflight
             {
                 Choice = FindingChoice.ExistingApps,
             });
+        }
+
+        var newIds = migrated.Where(r => r.IsRegistration && !r.IsUpdate).ToList();
+        if (newIds.Count > 0)
+        {
+            findings.Add(new Finding(Severity.Warning,
+                $"New app IDs · {newIds.Count} registration{Plural(newIds.Count)}",
+                $"Each is recreated in {destinationName} with a new app ID. Anything that signs in with the old one, such as a script, service or mobile app, has to be changed. The results list every new app ID.",
+                newIds.Select(r => $"{r.Source.DisplayName} (app ID {r.AppId} in the source)").ToList()));
         }
 
         var leftOut = migrated.SelectMany(r => r.Changes.Where(c => c.Description.EndsWith("removed.", StringComparison.Ordinal))
@@ -236,6 +281,19 @@ public static class AppPreflight
                 "Provisioning (SCIM) settings and credentials, Application Proxy connectors and consent grants aren't copied. Check them in the source and set them up again where needed.",
                 []));
         }
+    }
+
+    /// <summary>The destination's registration for this app ID, or null.</summary>
+    static async Task<string?> RegistrationIdAsync(IGraphReader graph, string appId, CancellationToken ct)
+    {
+        var page = await graph.GetObjectAsync(GraphQuery.Where("v1.0/applications", $"appId eq {GraphQuery.Literal(appId)}", "id", top: 1), ct);
+        return page["value"]?.AsArray().OfType<JsonObject>().Select(a => Text(a, "id")).FirstOrDefault(i => i.Length > 0);
+    }
+
+    static async Task<bool> NameTakenAsync(IGraphReader graph, string name, CancellationToken ct)
+    {
+        var page = await graph.GetObjectAsync(GraphQuery.Where("v1.0/applications", $"displayName eq {GraphQuery.Literal(name)}", "id", top: 1), ct);
+        return page["value"] is JsonArray { Count: > 0 };
     }
 
     /// <summary>The destination's service principal for this app ID, or null.</summary>

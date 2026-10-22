@@ -47,6 +47,30 @@ public sealed class ApplicationsState
 
     public event Action? Changed;
 
+    /// <summary>
+    /// An app the policy Map asked to migrate ("Migrate it in Applications"), by app ID: ticked once the apps are read.
+    /// </summary>
+    public string? RequestedAppId { get; private set; }
+
+    public void Request(string appId)
+    {
+        RequestedAppId = appId;
+        Changed?.Invoke();
+    }
+
+    /// <summary>Ticks the requested app. Returns its name, or null when no app with that ID can be migrated.</summary>
+    public string? TakeRequest()
+    {
+        var appId = RequestedAppId;
+        RequestedAppId = null;
+        var app = Apps.FirstOrDefault(a => string.Equals(a.Settings["appId"]?.GetValue<string>(), appId, StringComparison.OrdinalIgnoreCase));
+        if (app is null)
+            return null;
+        Selected.Add(MigrationState.Key(app));
+        Changed?.Invoke();
+        return app.DisplayName;
+    }
+
     public void SetApps(ExportResult result)
     {
         Apps = result.Items;

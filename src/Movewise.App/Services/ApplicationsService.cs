@@ -56,7 +56,8 @@ public sealed class ApplicationsService
             await BuildMappingAsync(progress, ct);
 
         var decisions = Decisions(_apps.Mapping);
-        var report = await AppPreflight.RunAsync(destination.Clients, destination.Info, _apps.SelectedApps, _apps.Mapping!, _apps.Choices, progress, ct);
+        var migrated = _state.Source is { } source ? _migration.MigratedAppIds(source, destination) : null;
+        var report = await AppPreflight.RunAsync(destination.Clients, destination.Info, _apps.SelectedApps, _apps.Mapping!, _apps.Choices, progress, ct, migrated);
         EnsureSameTenants(null, destination);
         if (Decisions(_apps.Mapping) != decisions || !_apps.MappingIsCurrent)
             throw new InvalidOperationException("The matches or the selection changed while the dry run was running. Run it again.");
@@ -135,16 +136,33 @@ public sealed class ApplicationsService
     /// <summary>Deletes what the current run created, and puts back what it changed.</summary>
     public Task RollbackAsync() => WriteAsync("Rolling back", AppDeployer.RollbackAsync);
 
+    /// <summary>
+    /// The app ID map the run records new app IDs in. Read before anything is written: a map that can't be read would
+    /// otherwise be overwritten, losing the app IDs of earlier runs.
+    /// </summary>
+    AppIdMap LoadAppIds(DeployRun run)
+    {
+        try
+        {
+            return AppIdMap.Load(run.DestinationTenantId, _migration.RunsRoot);
+        }
+        catch (Exception ex) when (ex is System.IO.IOException or System.Text.Json.JsonException or System.IO.InvalidDataException or UnauthorizedAccessException)
+        {
+            throw new InvalidOperationException($"Couldn't read the app ID map at {AppIdMap.PathFor(run.DestinationTenantId, _migration.RunsRoot)}, so nothing was changed. {ex.Message}");
+        }
+    }
+
     /// <summary>Stops once the request in progress is finished. The run can be resumed or rolled back later.</summary>
     public void Stop() => _running?.Cancel();
 
-    async Task WriteAsync(string verb, Func<IGraphWriter, DeployRun, Func<Task>, Action<DeployStep>, CancellationToken, Task> work)
+    async Task WriteAsync(string verb, Func<IGraphWriter, DeployRun, Func<Task>, Action<DeployStep>, CancellationToken, AppIdMap, Task> work)
     {
         var destination = _state.Destination ?? throw new InvalidOperationException("Sign in to the destination tenant first.");
         var run = _apps.Run ?? throw new InvalidOperationException("There's no deployment to run.");
         if (run.DestinationTenantId != destination.Info.TenantId)
             throw new InvalidOperationException($"This run was for {run.DestinationName}, but you're signed in to {destination.Info.DisplayName}.");
         RefuseWhileWorking();
+        var appIds = LoadAppIds(run);
 
         using var cts = new CancellationTokenSource();
         _running = cts;
@@ -166,7 +184,7 @@ public sealed class ApplicationsService
             _apps.NotifyChanged();
             // Saving isn't cancelled with the run: what's on disk must always match the destination.
             await MigrationService.Logged($"{verb} app run {run.RunId}",
-                () => work(destination.Clients.GraphWriter, run, () => RunStore.SaveAsync(run), Changed, cts.Token));
+                () => work(destination.Clients.GraphWriter, run, () => RunStore.SaveAsync(run), Changed, cts.Token, appIds));
             DiagnosticLog.Info($"{verb} app run {run.RunId} finished: {run.DoneCount} done, {run.FailedCount} failed, {run.RemainingCount} unfinished.");
         }
         finally
