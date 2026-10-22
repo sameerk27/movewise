@@ -8,8 +8,8 @@ namespace Movewise.App.Demo;
 /// <summary>
 /// An in-memory Microsoft Graph for the demo tenants. It understands the requests Movewise makes: collections,
 /// items by ID (including Intune's <c>('id')</c> form), assignments, simple <c>$filter</c>s (eq, startswith, and, or),
-/// <c>$top</c>, SharePoint sites by address, and an app's assignments and owners. Writes change the in-memory tenant,
-/// so deploy and rollback can be tried.
+/// <c>$top</c>, SharePoint sites by address, and an app's assignments, owners, signing certificates and claims, and
+/// gallery templates. Writes change the in-memory tenant, so deploy and rollback can be tried.
 /// </summary>
 sealed class DemoGraph : IGraphWriter
 {
@@ -105,7 +105,11 @@ sealed class DemoGraph : IGraphWriter
                 return Page(Filter(Items(basePath), query), query);
 
             var (item, sub) = Find(basePath) ?? throw NotFound(path);
-            return sub is null ? Visible(item) : new JsonObject { ["value"] = (item[Hidden + sub] ?? new JsonArray()).DeepClone() };
+            // An app's custom claims are one object, and missing until set; other parts are lists.
+            return sub is null ? Visible(item)
+                : item[Hidden + sub] is JsonObject part ? (JsonObject)part.DeepClone()
+                : sub.Equals("claimsPolicy", StringComparison.OrdinalIgnoreCase) ? throw NotFound(path)
+                : new JsonObject { ["value"] = (item[Hidden + sub] ?? new JsonArray()).DeepClone() };
         }
     }
 
@@ -121,6 +125,8 @@ sealed class DemoGraph : IGraphWriter
         lock (_gate)
         {
             var (basePath, _) = Split(path);
+            if (basePath.StartsWith("v1.0/applicationTemplates/", StringComparison.OrdinalIgnoreCase) && basePath.EndsWith("/instantiate", StringComparison.OrdinalIgnoreCase))
+                return Instantiate(basePath.Split('/')[2], Text(body.AsObject(), "displayName")) ?? throw NotFound(path);
             if (_collections.TryGetValue(basePath, out var list))
             {
                 var created = (JsonObject)body.DeepClone();
@@ -160,6 +166,18 @@ sealed class DemoGraph : IGraphWriter
                     assignment["principalType"] = _collections.TryGetValue("v1.0/groups", out var groups) && groups.Any(g => Text(g, "id") == Text(assignment, "principalId")) ? "Group" : "User";
                     HiddenList(item, "appRoleAssignedTo").Add(assignment);
                     return (JsonObject)assignment.DeepClone();
+                case "addtokensigningcertificate":
+                    // A new SAML signing certificate: only its public details come back.
+                    var thumbprint = Convert.ToHexString(Guid.NewGuid().ToByteArray()) + "0000AB12";
+                    if (item["keyCredentials"] is not JsonArray keys)
+                        item["keyCredentials"] = keys = [];
+                    keys.Add(new JsonObject { ["keyId"] = Guid.NewGuid().ToString(), ["usage"] = "Sign", ["customKeyIdentifier"] = thumbprint });
+                    return new JsonObject { ["thumbprint"] = thumbprint, ["endDateTime"] = body["endDateTime"]?.DeepClone() };
+                case "claimsmappingpolicies/$ref":
+                    var policyId = LastSegment(body["@odata.id"]);
+                    var policy = Items("v1.0/policies/claimsMappingPolicies").FirstOrDefault(p => Text(p, "id") == policyId);
+                    HiddenList(item, "claimsMappingPolicies").Add(policy is null ? new JsonObject { ["id"] = policyId } : Visible(policy));
+                    return null;
                 case "owners/$ref":
                     HiddenList(item, "owners").Add(new JsonObject { ["@odata.type"] = "#microsoft.graph.user", ["id"] = LastSegment(body["@odata.id"]) });
                     return null;
@@ -203,7 +221,7 @@ sealed class DemoGraph : IGraphWriter
         {
             var (basePath, _) = Split(path);
             var target = _objects.TryGetValue(basePath, out var found) ? found
-                : Find(basePath) is ({ } item, null) ? item
+                : Find(basePath) is ({ } item, var sub) ? sub is null ? item : Part(item, sub)
                 : throw NotFound(path);
             foreach (var (name, value) in body.AsObject())
                 target[name] = value?.DeepClone();
@@ -233,9 +251,14 @@ sealed class DemoGraph : IGraphWriter
             var (basePath, _) = Split(path);
             foreach (var (collection, list) in _collections)
             {
-                var removed = list.RemoveAll(i => Matches(basePath, collection, Text(i, "id")));
-                if (removed > 0)
-                    return;
+                var gone = list.Where(i => Matches(basePath, collection, Text(i, "id"))).ToList();
+                if (gone.Count == 0)
+                    continue;
+                list.RemoveAll(gone.Contains);
+                // Deleting a registration deletes its service principal too.
+                if (collection.Equals("v1.0/applications", StringComparison.OrdinalIgnoreCase) && _collections.TryGetValue("v1.0/servicePrincipals", out var principals))
+                    principals.RemoveAll(p => gone.Any(a => Text(a, "appId") == Text(p, "appId")));
+                return;
             }
 
             // An app's assignment (appRoleAssignedTo/{id}) or owner (owners/{id}/$ref).
@@ -278,7 +301,44 @@ sealed class DemoGraph : IGraphWriter
             if (item is not null)
                 return (item, remainder.Length > 1 ? remainder[1..] : null);
         }
+        // An app's custom claims are only in beta; the app is the same one.
+        if (basePath.StartsWith("beta/servicePrincipals/", StringComparison.OrdinalIgnoreCase))
+            return Find("v1.0/" + basePath["beta/".Length..]);
         return null;
+    }
+
+    /// <summary>A part of an item kept as one object, such as an app's custom claims, made when first changed.</summary>
+    static JsonObject Part(JsonObject item, string name)
+    {
+        if (item[Hidden + name] is not JsonObject part)
+            item[Hidden + name] = part = [];
+        return part;
+    }
+
+    /// <summary>
+    /// Makes an app from a gallery template: its registration, with the template's app roles, and its service principal.
+    /// Null when there's no such template.
+    /// </summary>
+    JsonObject? Instantiate(string templateId, string displayName)
+    {
+        var template = Items("v1.0/applicationTemplates").FirstOrDefault(t => Text(t, "id") == Uri.UnescapeDataString(templateId));
+        if (template is null)
+            return null;
+        var appId = Guid.NewGuid().ToString();
+        var now = DateTimeOffset.UtcNow.ToString("o");
+        var application = new JsonObject
+        {
+            ["id"] = Guid.NewGuid().ToString(), ["appId"] = appId, ["displayName"] = displayName, ["createdDateTime"] = now,
+            ["appRoles"] = template[Hidden + "appRoles"]?.DeepClone() ?? new JsonArray(),
+        };
+        var principal = new JsonObject
+        {
+            ["id"] = Guid.NewGuid().ToString(), ["appId"] = appId, ["displayName"] = displayName, ["createdDateTime"] = now,
+            ["servicePrincipalType"] = "Application", ["applicationTemplateId"] = Text(template, "id"), ["tags"] = new JsonArray("WindowsAzureActiveDirectoryIntegratedApp"),
+        };
+        Add("v1.0/applications", application);
+        Add("v1.0/servicePrincipals", principal);
+        return new JsonObject { ["application"] = Visible(application), ["servicePrincipal"] = Visible(principal) };
     }
 
     static bool Matches(string basePath, string collection, string id) =>

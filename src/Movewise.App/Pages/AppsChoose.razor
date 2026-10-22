@@ -12,7 +12,7 @@
         <div class="head-row">
             <div class="head-text">
                 <h1>Choose applications to migrate</h1>
-                <p class="muted">Apps Movewise found in @SourceName: enterprise apps from other organizations, which keep their app ID, and @SourceName's own app registrations, which get a new one. Microsoft's own apps are left out: every tenant has them.</p>
+                <p class="muted">Apps Movewise found in @SourceName: enterprise apps from other organizations, which keep their app ID, and @SourceName's own app registrations and gallery apps, which get a new one. Microsoft's own apps are left out: every tenant has them.</p>
             </div>
             @if (State.ReadyToDiscover)
             {
@@ -137,6 +137,7 @@
         (null, "All"),
         (ResourceRegistry.EnterpriseApp, "Enterprise apps"),
         (ResourceRegistry.AppRegistration, "App registrations"),
+        (ResourceRegistry.GalleryApp, "Gallery apps"),
         (UsedByPolicies, "Used by policies"),
     ];
 
@@ -230,7 +231,8 @@
     static (string Pill, string Text) Status(ExportedResource app)
     {
         var notMigrated = AppPreflight.Strings(app.Settings["notMigrated"]);
-        return NeedsConsent(app) ? ("warn", "Needs consent")
+        return app.Settings["saml"] is JsonObject ? ("warn", "New certificate")
+            : NeedsConsent(app) ? ("warn", "Needs consent")
             : notMigrated.Any(n => n.StartsWith("Client secrets", StringComparison.Ordinal)) ? ("warn", "New secret needed")
             : notMigrated.Count > 0 ? ("neutral", "Partial")
             : ("ok", "Ready");
@@ -241,6 +243,8 @@
         var parts = new List<string>();
         if (app.Type.Id == ResourceRegistry.AppRegistration)
             parts.Add($"Registered in {SourceName}");
+        else if (app.Type.Id == ResourceRegistry.GalleryApp)
+            parts.Add($"From the gallery ({app.Settings["template"]?["displayName"]})");
         else if (Text(app, "publisherName") is { Length: > 0 } publisher)
             parts.Add(publisher);
         parts.Add($"app ID {Text(app, "appId")}");
@@ -251,7 +255,9 @@
 
     static string SignOn(ExportedResource app)
     {
-        var principal = app.Type.Id == ResourceRegistry.AppRegistration ? app.Settings["servicePrincipal"] as JsonObject : app.Settings;
+        if (app.Settings["saml"] is JsonObject)
+            return "SAML";
+        var principal = app.Type.Id == ResourceRegistry.EnterpriseApp ? app.Settings : app.Settings["servicePrincipal"] as JsonObject;
         return (principal?["preferredSingleSignOnMode"] as JsonValue)?.ToString() switch
         {
             "saml" => "SAML",

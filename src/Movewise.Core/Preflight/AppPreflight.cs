@@ -49,7 +49,11 @@ public sealed record AppResult(ExportedResource Source, JsonObject Desired, Outc
     public string Key => MappingPlan.KeyOf(Source.Type.Id, Source.SourceId);
     public string AppId => Source.Settings["appId"]?.GetValue<string>() ?? "";
     public bool IsUpdate => ExistingId is not null && Outcome == Outcome.Create;
-    public bool IsRegistration => Source.Type.Id == ResourceRegistry.AppRegistration;
+    /// <summary>True for the source's own apps (registrations and gallery apps): recreated with a new app ID.</summary>
+    public bool IsOwnApp => AppPreflight.IsOwn(Source.Type);
+
+    /// <summary>True when the app signs users in with SAML, which is set up again with a new signing certificate.</summary>
+    public bool UsesSaml => Source.Settings["saml"] is JsonObject;
 }
 
 public sealed record AppPreflightReport(IReadOnlyList<AppResult> Apps, IReadOnlyList<Finding> Findings)
@@ -90,6 +94,15 @@ public static class AppPreflight
         "optionalClaims", "api", "requiredResourceAccess", "groupMembershipClaims", "info", "notes", "tags",
     ];
 
+    /// <summary>A gallery app's settings that are set once it's made from its template: what it was set up with, not what the template gives.</summary>
+    public static IReadOnlyList<string> CopiedGallerySettings { get; } =
+    [
+        "identifierUris", "web", "appRoles", "optionalClaims", "groupMembershipClaims", "notes",
+    ];
+
+    /// <summary>The source's own apps: app registrations, and apps made from a gallery template.</summary>
+    public static bool IsOwn(ResourceType type) => type.Id is ResourceRegistry.AppRegistration or ResourceRegistry.GalleryApp;
+
     const string Select = "id,appId,displayName,accountEnabled,appRoleAssignmentRequired,description,homepage,loginUrl,logoutUrl,notes,notificationEmailAddresses,tags";
 
     public static async Task<AppPreflightReport> RunAsync(
@@ -128,7 +141,7 @@ public static class AppPreflight
             var appId = app.Settings["appId"]?.GetValue<string>() ?? "";
 
             // A registration is recreated with a new app ID, so it's only "already there" when Movewise migrated it before.
-            var isRegistration = app.Type.Id == ResourceRegistry.AppRegistration;
+            var isRegistration = IsOwn(app.Type);
             var destinationAppId = isRegistration ? migratedAppIds?.GetValueOrDefault(appId) : appId;
             var existing = destinationAppId is null ? null : await FindAsync(graph, destinationAppId, ct);
             var assignments = Assignments(desired);
@@ -143,6 +156,11 @@ public static class AppPreflight
             if (transformed.Problems.Count > 0)
             {
                 results.Add(new AppResult(app, desired, Outcome.Blocked, transformed.Problems) { ExistingId = existing is null ? null : Text(existing, "id"), Changes = transformed.Changes });
+                continue;
+            }
+            if (existing is null && app.Settings["template"]?["missing"]?.GetValue<bool>() == true)
+            {
+                results.Add(new AppResult(app, desired, Outcome.Skip, ["Its gallery template can't be found, so it can't be made from it. Add it from the gallery by hand."]));
                 continue;
             }
             if (existing is null)
@@ -185,7 +203,7 @@ public static class AppPreflight
                 continue;
             }
             results.Add(new AppResult(app, desired, Outcome.Create,
-                [$"{already} Updated in place: nothing is taken away.{(isRegistration ? " Its registration settings are left as they are." : "")}"])
+                [$"{already} Updated in place: nothing is taken away.{(isRegistration ? " Its registration and single sign-on settings are left as they are." : "")}"])
             {
                 ExistingId = id,
                 DestinationAppId = destinationAppId,
@@ -236,13 +254,31 @@ public static class AppPreflight
             });
         }
 
-        var newIds = migrated.Where(r => r.IsRegistration && !r.IsUpdate).ToList();
+        var newIds = migrated.Where(r => r.IsOwnApp && !r.IsUpdate).ToList();
         if (newIds.Count > 0)
         {
             findings.Add(new Finding(Severity.Warning,
-                $"New app IDs · {newIds.Count} registration{Plural(newIds.Count)}",
+                $"New app IDs · {newIds.Count} app{Plural(newIds.Count)}",
                 $"Each is recreated in {destinationName} with a new app ID. Anything that signs in with the old one, such as a script, service or mobile app, has to be changed. The results list every new app ID.",
                 newIds.Select(r => $"{r.Source.DisplayName} (app ID {r.AppId} in the source)").ToList()));
+        }
+
+        var saml = migrated.Where(r => r.UsesSaml && r.IsOwnApp && !r.IsUpdate).ToList();
+        if (saml.Count > 0)
+        {
+            findings.Add(new Finding(Severity.Warning,
+                $"New SAML signing certificates · {saml.Count} app{Plural(saml.Count)}",
+                $"Their single sign-on and claims are copied, with a new signing certificate in {destinationName}: the old one's private key can't be exported. Give each app's vendor the new certificate, or the app's new federation metadata, before moving users over.",
+                saml.Select(r => r.Source.DisplayName).ToList()));
+        }
+
+        var gallery = results.Where(r => r.Source.Settings["template"]?["missing"]?.GetValue<bool>() == true).ToList();
+        if (gallery.Count > 0)
+        {
+            findings.Add(new Finding(Severity.Warning,
+                $"Add from the gallery by hand · {gallery.Count} app{Plural(gallery.Count)}",
+                "Their gallery template can't be found, so Movewise can't make them from it. Add each one from the gallery in the destination, then set it up as it was in the source.",
+                gallery.Select(r => r.Source.DisplayName).ToList()));
         }
 
         var leftOut = migrated.SelectMany(r => r.Changes.Where(c => c.Description.EndsWith("removed.", StringComparison.Ordinal))

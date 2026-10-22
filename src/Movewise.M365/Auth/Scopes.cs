@@ -47,6 +47,8 @@ public static class Scopes
         // an app's API permissions: Movewise leaves consent to an admin.
         "Application.ReadWrite.All",
         "AppRoleAssignment.ReadWrite.All",
+        // SAML apps' claims: claims mapping policies and custom claims.
+        "Policy.ReadWrite.ApplicationConfiguration",
         "Group.ReadWrite.All",
         "DeviceManagementConfiguration.ReadWrite.All",
         "DeviceManagementApps.ReadWrite.All",

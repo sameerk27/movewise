@@ -82,8 +82,9 @@ public class AppRegistrationTests
     {
         var apps = (await Exporter.ExportAppsAsync(SourceGraph(), Source.TenantId)).Items;
 
-        // Salesforce came from a gallery template: left for later.
-        Assert.Equal(new[] { "Contoso HR Portal", "Payroll Sync" }, apps.Select(a => a.DisplayName));
+        // Salesforce came from a gallery template, so it's made from it again.
+        Assert.Equal(new[] { "Contoso HR Portal", "Payroll Sync", "Salesforce" }, apps.Select(a => a.DisplayName));
+        Assert.Equal(ResourceRegistry.GalleryApp, apps[2].Type.Id);
         var hr = apps[0];
         Assert.Equal(ResourceRegistry.AppRegistration, hr.Type.Id);
         Assert.True(hr.Settings["servicePrincipal"]!["appRoleAssignmentRequired"]!.GetValue<bool>());

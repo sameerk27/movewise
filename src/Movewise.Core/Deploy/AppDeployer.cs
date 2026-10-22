@@ -15,11 +15,20 @@ public static class AppDeployer
 {
     const string ServicePrincipals = "v1.0/servicePrincipals";
     const string Applications = "v1.0/applications";
+    const string ClaimsMappingPolicies = "v1.0/policies/claimsMappingPolicies";
 
     // Recorded in a step's CreatedRules: its app exists (or has been updated), so a retry goes on to its access;
     // and a registration's application ID URI has been set.
     const string AppDone = "app";
     const string UriDone = "uri";
+    const string ManifestDone = "manifest";
+    const string SettingsDone = "settings";
+    const string SsoDone = "sso";
+    const string CertificateDone = "certificate";
+    const string ClaimsPolicyDone = "claimsPolicy";
+    // A claims mapping policy made ("claims:{n}|{id}"), then assigned to the app ("claimsAssigned:{n}").
+    const string ClaimsPrefix = "claims:";
+    const string AssignedPrefix = "claimsAssigned:";
     const string OwnerPrefix = "owner:";
     const string AssignmentPrefix = "assignment:";
 
@@ -39,7 +48,7 @@ public static class AppDeployer
                 Assignments = (JsonArray)a.Assignments.DeepClone(),
                 Owners = (JsonArray)a.Owners.DeepClone(),
                 UpdateOf = a.IsUpdate ? a.ExistingId : null,
-                AppId = a.IsRegistration ? a.DestinationAppId : null,
+                AppId = a.IsOwnApp ? a.DestinationAppId : null,
             })
             .ToList();
 
@@ -65,23 +74,34 @@ public static class AppDeployer
     {
         if (app.IsUpdate)
         {
-            var settings = app.IsRegistration ? app.Desired["servicePrincipal"] as JsonObject ?? [] : app.Desired;
+            var settings = app.IsOwnApp ? app.Desired["servicePrincipal"] as JsonObject ?? [] : app.Desired;
             return SettingsDiff.Only(settings, app.ChangedSettings);
         }
-        if (!app.IsRegistration)
+        if (!app.IsOwnApp)
         {
-            var body = SettingsDiff.Only(app.Desired, AppPreflight.CopiedSettings.Where(app.Desired.ContainsKey));
-            body["appId"] = app.AppId;
-            return body;
+            var enterprise = SettingsDiff.Only(app.Desired, AppPreflight.CopiedSettings.Where(app.Desired.ContainsKey));
+            enterprise["appId"] = app.AppId;
+            return enterprise;
         }
         var principal = app.Desired["servicePrincipal"] as JsonObject ?? [];
-        return new JsonObject
+        var template = app.Desired["template"] as JsonObject;
+        var copied = template is not null ? AppPreflight.CopiedGallerySettings : AppPreflight.CopiedRegistrationSettings;
+        var uris = AppPreflight.Strings(app.Desired["identifierUris"]);
+        var body = new JsonObject
         {
-            ["application"] = SettingsDiff.Only(app.Desired, AppPreflight.CopiedRegistrationSettings.Where(app.Desired.ContainsKey)),
+            ["application"] = SettingsDiff.Only(app.Desired, copied.Where(name => app.Desired.ContainsKey(name) && name != "identifierUris")),
             ["servicePrincipal"] = SettingsDiff.Only(principal, AppPreflight.CopiedSettings.Where(principal.ContainsKey)),
             ["sourceAppId"] = app.AppId,
-            ["apiUri"] = AppPreflight.Strings(app.Desired["identifierUris"]).Contains($"api://{app.AppId}", StringComparer.OrdinalIgnoreCase),
+            ["apiUri"] = uris.Contains($"api://{app.AppId}", StringComparer.OrdinalIgnoreCase),
+            // A SAML app's entity IDs are kept; other URIs need a domain verified in the destination.
+            ["identifierUris"] = new JsonArray((app.UsesSaml ? uris.Where(u => !u.Equals($"api://{app.AppId}", StringComparison.OrdinalIgnoreCase)) : [])
+                .Select(u => (JsonNode?)u).ToArray()),
         };
+        if (template is not null)
+            body["template"] = template.DeepClone();
+        if (app.Desired["saml"] is JsonObject saml)
+            body["saml"] = saml.DeepClone();
+        return body;
     }
 
     /// <summary>
@@ -129,14 +149,14 @@ public static class AppDeployer
         await save();
     }
 
-    static bool IsRegistration(DeployStep step) => step.TargetType == ResourceRegistry.AppRegistration;
+    static bool IsOwnApp(DeployStep step) => step.TargetType is ResourceRegistry.AppRegistration or ResourceRegistry.GalleryApp;
 
     /// <summary>The service principal assignments are made on: a registration's own, or the enterprise app itself.</summary>
     static string PrincipalId(DeployStep step) => step.ServicePrincipalId ?? step.DestinationId!;
 
     /// <summary>Where owners are added: a registration's owners are the registration's.</summary>
     static string OwnersPath(DeployStep step) =>
-        IsRegistration(step) ? $"{Applications}/{Uri.EscapeDataString(step.DestinationId!)}" : ItemPath(step.DestinationId!);
+        IsOwnApp(step) ? $"{Applications}/{Uri.EscapeDataString(step.DestinationId!)}" : ItemPath(step.DestinationId!);
 
     /// <summary>Creates the app, or changes the existing one's settings.</summary>
     static async Task AppAsync(IGraphWriter graph, DeployRun run, DeployStep step, Func<Task> save, AppIdMap? appIds)
@@ -151,7 +171,7 @@ public static class AppDeployer
                 {
                     var current = await graph.GetObjectAsync($"{ItemPath(existingId)}?$select={string.Join(",", AppPreflight.CopiedSettings)}", none);
                     step.Previous = SettingsDiff.Only(Normalizer.Canonicalize(current)!.AsObject(), step.Body.Select(p => p.Key));
-                    if (IsRegistration(step))
+                    if (IsOwnApp(step))
                     {
                         step.ServicePrincipalId = existingId;
                         step.DestinationId = await RegistrationIdAsync(graph, step.AppId!, none)
@@ -170,9 +190,9 @@ public static class AppDeployer
                 return;
             }
 
-            if (IsRegistration(step))
+            if (IsOwnApp(step))
             {
-                await RegistrationAsync(graph, run, step, save, appIds);
+                await OwnAppAsync(graph, run, step, save, appIds);
                 return;
             }
 
@@ -217,22 +237,24 @@ public static class AppDeployer
     }
 
     /// <summary>
-    /// Recreates an app registration: the registration (which gets a new app ID), its application ID URI made from the
-    /// new app ID, then its service principal. The new app ID is recorded in the app ID map as soon as the service
-    /// principal exists. Each part is kept on the step once made, so a retry does only the rest.
+    /// Recreates one of the source's own apps, each part kept on the step once made so a retry does only the rest:
+    /// the app itself (a registration posted as it was, or a gallery app made from its template, either way with a
+    /// new app ID), its application ID URIs, its service principal and settings, then for a SAML app its single
+    /// sign-on, a new signing certificate and its claims. The new app ID is recorded in the app ID map once it's set up.
     /// </summary>
-    static async Task RegistrationAsync(IGraphWriter graph, DeployRun run, DeployStep step, Func<Task> save, AppIdMap? appIds)
+    static async Task OwnAppAsync(IGraphWriter graph, DeployRun run, DeployStep step, Func<Task> save, AppIdMap? appIds)
     {
         var none = CancellationToken.None;
+        var template = step.Body["template"] as JsonObject;
         if (step.DestinationId is null)
         {
-            // An interrupted create: the registration is looked for by name, made after the request was sent.
+            // An interrupted create: the app is looked for by name, made after the request was sent.
             if (step.Status == StepStatus.Creating)
             {
                 var found = await FindRegistrationsAsync(graph, step, none);
                 if (found.Count > 1)
                 {
-                    step.Message = "More than one registration in the destination has this name and was made during this run, so Movewise can't tell which is its own. Delete the extra one in the admin center, then retry.";
+                    step.Message = "More than one app in the destination has this name and was made during this run, so Movewise can't tell which is its own. Delete the extra one in the admin center, then retry.";
                     await save();
                     return;
                 }
@@ -248,10 +270,23 @@ public static class AppDeployer
                 await Finish(step, StepStatus.Creating, null, save);
                 try
                 {
-                    var created = await graph.PostAsync(Applications, step.Body["application"]!.DeepClone(), none);
-                    step.AppId = created?["appId"]?.GetValue<string>();
-                    step.DestinationId = created?["id"]?.GetValue<string>()
-                        ?? throw new InvalidOperationException("Microsoft Graph didn't return the new registration's ID.");
+                    if (template is not null)
+                    {
+                        // The template makes the registration and its service principal together.
+                        var made = await graph.PostAsync($"v1.0/applicationTemplates/{Uri.EscapeDataString(Text(template, "id"))}/instantiate",
+                            new JsonObject { ["displayName"] = step.DisplayName }, none);
+                        step.AppId = made?["application"]?["appId"]?.GetValue<string>();
+                        step.ServicePrincipalId = made?["servicePrincipal"]?["id"]?.GetValue<string>();
+                        step.DestinationId = made?["application"]?["id"]?.GetValue<string>()
+                            ?? throw new InvalidOperationException("Microsoft Graph didn't return the new app's ID.");
+                    }
+                    else
+                    {
+                        var created = await graph.PostAsync(Applications, step.Body["application"]!.DeepClone(), none);
+                        step.AppId = created?["appId"]?.GetValue<string>();
+                        step.DestinationId = created?["id"]?.GetValue<string>()
+                            ?? throw new InvalidOperationException("Microsoft Graph didn't return the new registration's ID.");
+                    }
                 }
                 catch (Exception ex) when (Deployer.IsUncertain(ex, none))
                 {
@@ -259,16 +294,46 @@ public static class AppDeployer
                     await save();
                     return;
                 }
+                catch (Exception ex) when (template is not null && ex is not OperationCanceledException)
+                {
+                    throw new InvalidOperationException($"It couldn't be made from the gallery template \"{Text(template, "displayName")}\": {ex.Message} Add it from the gallery by hand.");
+                }
                 await save();
             }
         }
-        step.AppId ??= (await graph.GetObjectAsync($"{Applications}/{Uri.EscapeDataString(step.DestinationId)}?$select=appId", none))["appId"]?.GetValue<string>()
+        var registration = $"{Applications}/{Uri.EscapeDataString(step.DestinationId)}";
+        step.AppId ??= (await graph.GetObjectAsync($"{registration}?$select=appId", none))["appId"]?.GetValue<string>()
             ?? throw new InvalidOperationException("Microsoft Graph didn't return the new app ID.");
 
-        if (step.Body["apiUri"]?.GetValue<bool>() == true && !step.CreatedRules.Contains(UriDone))
+        // A gallery app is set up as the source's was. Its app roles are added to the template's, keeping their IDs,
+        // so assignments keep their roles; roles the template already has stay, since enabled roles can't be removed.
+        if (template is not null && !Done(step, ManifestDone))
         {
-            await graph.PatchAsync($"{Applications}/{Uri.EscapeDataString(step.DestinationId)}",
-                new JsonObject { ["identifierUris"] = new JsonArray($"api://{step.AppId}") }, none);
+            var settings = (JsonObject)(step.Body["application"]?.DeepClone() ?? new JsonObject());
+            if (settings["appRoles"] is JsonArray wanted)
+            {
+                var roles = (await graph.GetObjectAsync($"{registration}?$select=appRoles", none))["appRoles"] as JsonArray ?? [];
+                var ids = roles.OfType<JsonObject>().Select(r => Text(r, "id")).ToHashSet(StringComparer.OrdinalIgnoreCase);
+                var merged = (JsonArray)roles.DeepClone();
+                foreach (var role in wanted.OfType<JsonObject>().Where(r => !ids.Contains(Text(r, "id"))))
+                    merged.Add(role.DeepClone());
+                settings["appRoles"] = merged;
+            }
+            if (settings.Count > 0)
+                await graph.PatchAsync(registration, settings, none);
+            step.CreatedRules.Add(ManifestDone);
+            await save();
+        }
+
+        // Application ID URIs: one made from the new app ID in place of the old one's, and a SAML app's entity IDs.
+        var uris = new JsonArray();
+        if (step.Body["apiUri"]?.GetValue<bool>() == true)
+            uris.Add($"api://{step.AppId}");
+        foreach (var uri in AppPreflight.Strings(step.Body["identifierUris"]))
+            uris.Add(uri);
+        if (uris.Count > 0 && !Done(step, UriDone))
+        {
+            await graph.PatchAsync(registration, new JsonObject { ["identifierUris"] = uris }, none);
             step.CreatedRules.Add(UriDone);
             await save();
         }
@@ -284,9 +349,20 @@ public static class AppDeployer
                 var created = await graph.PostAsync(ServicePrincipals, body, none);
                 step.ServicePrincipalId = created?["id"]?.GetValue<string>()
                     ?? throw new InvalidOperationException("Microsoft Graph didn't return the new service principal's ID.");
+                step.CreatedRules.Add(SettingsDone);
             }
             await save();
         }
+        var principal = ItemPath(step.ServicePrincipalId);
+        if (!Done(step, SettingsDone) && step.Body["servicePrincipal"] is JsonObject { Count: > 0 } principalSettings)
+        {
+            await graph.PatchAsync(principal, principalSettings.DeepClone(), none);
+            step.CreatedRules.Add(SettingsDone);
+            await save();
+        }
+
+        if (step.Body["saml"] is JsonObject saml)
+            await SamlAsync(graph, step, principal, saml, save);
 
         var sourceAppId = step.Body["sourceAppId"]?.GetValue<string>() ?? "";
         if (appIds is not null)
@@ -297,6 +373,78 @@ public static class AppDeployer
         step.CreatedRules.Add(AppDone);
         await Finish(step, StepStatus.Created, null, save);
     }
+
+    /// <summary>
+    /// SAML single sign-on on a new app: the mode and relay state, a new signing certificate made the one in use, the
+    /// claims mapping policies (each made anew and assigned to the app) and its custom claims.
+    /// </summary>
+    static async Task SamlAsync(IGraphWriter graph, DeployStep step, string principal, JsonObject saml, Func<Task> save)
+    {
+        var none = CancellationToken.None;
+        if (!Done(step, SsoDone))
+        {
+            var settings = new JsonObject { ["preferredSingleSignOnMode"] = "saml" };
+            if (saml["samlSingleSignOnSettings"] is JsonObject relay)
+                settings["samlSingleSignOnSettings"] = relay.DeepClone();
+            await graph.PatchAsync(principal, settings, none);
+            step.CreatedRules.Add(SsoDone);
+            await save();
+        }
+
+        if (!Done(step, CertificateDone))
+        {
+            var expires = DateTimeOffset.UtcNow.AddYears(3);
+            var certificate = await graph.PostAsync($"{principal}/addTokenSigningCertificate", new JsonObject
+            {
+                ["displayName"] = $"CN={step.DisplayName}",
+                ["endDateTime"] = expires.ToString("o"),
+            }, none);
+            var thumbprint = certificate?["thumbprint"]?.GetValue<string>()
+                ?? throw new InvalidOperationException("Microsoft Graph didn't return the new signing certificate.");
+            await graph.PatchAsync(principal, new JsonObject { ["preferredTokenSigningKeyThumbprint"] = thumbprint }, none);
+            step.CreatedRules.Add($"{CertificateDone}|{thumbprint}");
+            step.Notes.Add($"New SAML signing certificate (thumbprint {thumbprint}, valid until {expires:d MMM yyyy}). Give it, or the app's federation metadata, to its vendor before moving users over.");
+            await save();
+        }
+
+        var policies = (saml["claimsMappingPolicies"] as JsonArray ?? []).OfType<JsonObject>().ToList();
+        for (var i = 0; i < policies.Count; i++)
+        {
+            var key = $"{ClaimsPrefix}{i}";
+            var policyId = step.CreatedRules.FirstOrDefault(r => r.StartsWith(key + "|", StringComparison.Ordinal))?[(key.Length + 1)..];
+            if (policyId is null)
+            {
+                var created = await graph.PostAsync(ClaimsMappingPolicies, new JsonObject
+                {
+                    ["displayName"] = policies[i]["displayName"]?.DeepClone() ?? step.DisplayName,
+                    ["definition"] = policies[i]["definition"]?.DeepClone(),
+                }, none);
+                policyId = created?["id"]?.GetValue<string>() ?? throw new InvalidOperationException("Microsoft Graph didn't return the new claims mapping policy's ID.");
+                step.CreatedRules.Add($"{key}|{policyId}");
+                await save();
+            }
+            if (!Done(step, $"{AssignedPrefix}{i}"))
+            {
+                await graph.PostAsync($"{principal}/claimsMappingPolicies/$ref",
+                    new JsonObject { ["@odata.id"] = $"https://graph.microsoft.com/{ClaimsMappingPolicies}/{policyId}" }, none);
+                step.CreatedRules.Add($"{AssignedPrefix}{i}");
+                await save();
+            }
+        }
+
+        if (saml["claimsPolicy"] is JsonObject claims && !Done(step, ClaimsPolicyDone))
+        {
+            await graph.PatchAsync($"beta/servicePrincipals/{Uri.EscapeDataString(step.ServicePrincipalId!)}/claimsPolicy", claims.DeepClone(), none);
+            step.CreatedRules.Add(ClaimsPolicyDone);
+            await save();
+        }
+    }
+
+    static bool Done(DeployStep step, string key) =>
+        step.CreatedRules.Any(r => r == key || r.StartsWith(key + "|", StringComparison.Ordinal));
+
+    static string Text(JsonObject item, string name) =>
+        item[name] is JsonValue value && value.TryGetValue<string>(out var text) ? text : "";
 
     /// <summary>
     /// Adds the app's owners, then its assignments, each recorded once made. One found already there is taken as
@@ -455,7 +603,7 @@ public static class AppDeployer
                 // An interrupted create: delete it only if it's clearly there.
                 try
                 {
-                    if (IsRegistration(step))
+                    if (IsOwnApp(step))
                     {
                         var found = await FindRegistrationsAsync(graph, step, none);
                         if (found.Count > 1)
@@ -487,7 +635,7 @@ public static class AppDeployer
             try
             {
                 // Deleting a registration deletes its service principal; owners and assignments go with the app.
-                var path = IsRegistration(step) ? $"{Applications}/{Uri.EscapeDataString(step.DestinationId)}" : ItemPath(step.DestinationId);
+                var path = IsOwnApp(step) ? $"{Applications}/{Uri.EscapeDataString(step.DestinationId)}" : ItemPath(step.DestinationId);
                 try
                 {
                     await graph.DeleteAsync(path, none);
@@ -497,8 +645,21 @@ public static class AppDeployer
                 {
                     step.Message = "Already gone from the destination.";
                 }
-                if (IsRegistration(step) && appIds is not null)
+                if (IsOwnApp(step) && appIds is not null)
                     await appIds.RemoveAsync(run.SourceTenantId, step.Body["sourceAppId"]?.GetValue<string>() ?? "", run.RunId);
+                // Claims mapping policies are objects of their own, made for this app: they go too.
+                foreach (var entry in step.CreatedRules.Where(r => r.StartsWith(ClaimsPrefix, StringComparison.Ordinal)).ToList())
+                {
+                    try
+                    {
+                        await graph.DeleteAsync($"{ClaimsMappingPolicies}/{Uri.EscapeDataString(entry.Split('|')[1])}", none);
+                    }
+                    catch (Exception ex) when (Deployer.IsNotFound(ex))
+                    {
+                    }
+                    step.CreatedRules.Remove(entry);
+                    await save();
+                }
                 await Finish(step, StepStatus.RolledBack, step.Message, stepSave);
             }
             catch (Exception ex) when (ex is not OperationCanceledException)

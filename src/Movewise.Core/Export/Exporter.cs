@@ -286,18 +286,20 @@ public static class Exporter
     /// <summary>
     /// Reads the source's apps for the Applications section. Enterprise apps: other organizations' apps, such as
     /// multi-tenant SaaS apps, with the same app ID in every tenant; Microsoft's own apps and managed identities are left
-    /// out. App registrations: the source's own apps, recreated with a new app ID; those made from a gallery template are
-    /// left out for now. Each comes with the users and groups assigned to it ("assignedUsers", "assignedGroups", each
+    /// out. App registrations: the source's own apps, recreated with a new app ID. Gallery apps: the source's apps made
+    /// from a gallery template, made again from it with a new app ID. Each comes with the users and groups assigned to it ("assignedUsers", "assignedGroups", each
     /// item a principal and app role), its owners ("owners", users only), the API permissions granted to it
     /// ("apiPermissions", listed for the admin, never granted by Movewise) and what can't be copied ("notMigrated").
-    /// A registration also has its service principal's settings ("servicePrincipal"). An app whose details can't be
-    /// read is left out with a warning.
+    /// A registration or gallery app also has its service principal's settings ("servicePrincipal"), its SAML single
+    /// sign-on and claims when it uses SAML ("saml"), and a gallery app its template ("template"). An app whose details
+    /// can't be read is left out with a warning.
     /// </summary>
     public static async Task<ExportResult> ExportAppsAsync(
         IGraphReader graph, string sourceTenantId, IProgress<string>? progress = null, CancellationToken ct = default)
     {
         var enterpriseType = ResourceRegistry.Get(ResourceRegistry.EnterpriseApp);
         var registrationType = ResourceRegistry.Get(ResourceRegistry.AppRegistration);
+        var galleryType = ResourceRegistry.Get(ResourceRegistry.GalleryApp);
         progress?.Report("Reading apps…");
         var principals = await graph.GetCollectionAsync(enterpriseType.ListPath, ct);
         var registrations = await graph.GetCollectionAsync(registrationType.ListPath, ct);
@@ -317,10 +319,9 @@ public static class Exporter
         foreach (var registration in registrations)
         {
             var principal = ownPrincipals.GetValueOrDefault(Text(registration, "appId"));
-            if (principal is not null && Text(principal, "applicationTemplateId").Length > 0)
-                continue;
-            reads.Add((Text(registration, "displayName"), registrationType,
-                token => ReadRegistrationAsync(graph, registrationType, registration, principal, ownAppIds, resources, token)));
+            var type = principal is not null && Text(principal, "applicationTemplateId").Length > 0 ? galleryType : registrationType;
+            reads.Add((Text(registration, "displayName"), type,
+                token => ReadRegistrationAsync(graph, type, registration, principal, ownAppIds, resources, token)));
         }
 
         var results = new ExportedResource?[reads.Count];
@@ -373,12 +374,16 @@ public static class Exporter
         settings["appId"] = appId;
         var notMigrated = new List<string>();
 
+        var fromGallery = type.Id == ResourceRegistry.GalleryApp;
         if (principal is not null)
         {
             var copied = Normalizer.Canonicalize(principal)!.AsObject();
             settings["servicePrincipal"] = Preflight.SettingsDiff.Only(copied, Preflight.AppPreflight.CopiedSettings.Where(copied.ContainsKey));
             await ReadAccessAsync(graph, principal, settings, notMigrated, resources, ct);
-            AddSignOnNotes(principal, notMigrated, certificates: false);
+            if (Text(principal, "preferredSingleSignOnMode") == "saml")
+                settings["saml"] = await ReadSamlAsync(graph, principal, notMigrated, ct);
+            else
+                AddSignOnNotes(principal, notMigrated, certificates: false);
         }
         else
         {
@@ -386,13 +391,18 @@ public static class Exporter
             settings["assignedGroups"] = new JsonArray();
             settings["apiPermissions"] = new JsonArray();
         }
+        if (fromGallery)
+            settings["template"] = await ReadTemplateAsync(graph, Text(principal!, "applicationTemplateId"), Text(raw, "displayName"), notMigrated, ct);
         await ReadOwnersAsync(graph, $"v1.0/applications/{Uri.EscapeDataString(id)}", settings, notMigrated, ct);
 
         if (raw["passwordCredentials"] is JsonArray { Count: > 0 } secrets)
             notMigrated.Add($"Client secrets ({secrets.Count}) can't be copied. Create new ones in the destination and update the service that uses them.");
         if (raw["keyCredentials"] is JsonArray { Count: > 0 } certificates)
             notMigrated.Add($"Certificates ({certificates.Count}) can't be copied: their private keys can't be exported. Upload new ones in the destination.");
-        var otherUris = Strings(raw["identifierUris"]).Where(u => !u.Equals($"api://{appId}", StringComparison.OrdinalIgnoreCase)).ToList();
+        // A SAML app's identifiers are its entity IDs, which name the app at its vendor rather than the tenant's domain.
+        var otherUris = Strings(raw["identifierUris"])
+            .Where(u => !u.Equals($"api://{appId}", StringComparison.OrdinalIgnoreCase) && settings["saml"] is null)
+            .ToList();
         if (otherUris.Count > 0)
             notMigrated.Add($"Application ID URIs ({string.Join(", ", otherUris)}) aren't copied: they must use a domain verified in the destination. Add them there by hand.");
         if (raw["api"]?["preAuthorizedApplications"] is JsonArray { Count: > 0 })
@@ -412,6 +422,54 @@ public static class Exporter
             info.Remove("logoUrl");
 
         return Finish(type, id, raw, settings, notMigrated);
+    }
+
+    /// <summary>
+    /// A SAML app's single sign-on as its service principal holds it: the mode and relay state, the claims mapping
+    /// policies assigned to it, and the claims set on its Attributes &amp; Claims page (its custom claims policy). The
+    /// signing certificate isn't kept: its private key can't be exported, so the destination gets a new one.
+    /// </summary>
+    static async Task<JsonObject> ReadSamlAsync(IGraphReader graph, JsonObject principal, List<string> notMigrated, CancellationToken ct)
+    {
+        var id = Uri.EscapeDataString(Text(principal, "id"));
+        var saml = new JsonObject
+        {
+            ["preferredSingleSignOnMode"] = "saml",
+            ["samlSingleSignOnSettings"] = principal["samlSingleSignOnSettings"]?.DeepClone(),
+        };
+        saml["claimsMappingPolicies"] = new JsonArray((await graph.GetCollectionAsync($"v1.0/servicePrincipals/{id}/claimsMappingPolicies", ct))
+            .Select(p => (JsonNode?)new JsonObject { ["displayName"] = Text(p, "displayName"), ["definition"] = p["definition"]?.DeepClone() })
+            .ToArray());
+        try
+        {
+            var claims = (JsonObject)Normalizer.Canonicalize(await graph.GetObjectAsync($"beta/servicePrincipals/{id}/claimsPolicy", ct))!;
+            claims.Remove("id");
+            if (claims["claims"] is JsonArray { Count: > 0 })
+                saml["claimsPolicy"] = claims;
+        }
+        catch (GraphException ex) when (ex.Status == System.Net.HttpStatusCode.NotFound)
+        {
+        }
+        catch (Exception ex) when (ex is not OperationCanceledException)
+        {
+            notMigrated.Add($"Its attributes and claims couldn't be read ({ex.Message}). Check them in the destination after deploying.");
+        }
+        return saml;
+    }
+
+    /// <summary>The gallery template an app was made from ("id", "displayName"), and "missing" when it can't be read.</summary>
+    static async Task<JsonObject> ReadTemplateAsync(IGraphReader graph, string templateId, string appName, List<string> notMigrated, CancellationToken ct)
+    {
+        try
+        {
+            var template = await graph.GetObjectAsync(GraphQuery.Item("v1.0/applicationTemplates", templateId, "id,displayName"), ct);
+            return new JsonObject { ["id"] = templateId, ["displayName"] = Text(template, "displayName") };
+        }
+        catch (Exception ex) when (ex is not OperationCanceledException)
+        {
+            notMigrated.Add($"Its gallery template ({templateId}) couldn't be found, so it can't be made from it. Add {appName} from the gallery in the destination by hand.");
+            return new JsonObject { ["id"] = templateId, ["displayName"] = appName, ["missing"] = true };
+        }
     }
 
     static ExportedResource Finish(ResourceType type, string id, JsonObject raw, JsonObject settings, List<string> notMigrated)
@@ -496,7 +554,8 @@ public static class Exporter
         switch (Text(principal, "preferredSingleSignOnMode"))
         {
             case "saml":
-                notMigrated.Add("SAML single sign-on isn't migrated yet. Set it up in the destination, with a new signing certificate, and give the app's vendor the new certificate or metadata.");
+                // Only the source's own apps (registrations and gallery apps) have their SAML migrated.
+                notMigrated.Add("SAML single sign-on of another organization's app can't be copied. Set it up in the destination by hand, with a new signing certificate, and give the app's vendor the new certificate or metadata.");
                 break;
             case "password":
                 notMigrated.Add("Password-based single sign-on: users' saved credentials can't be copied. Set it up again in the destination.");

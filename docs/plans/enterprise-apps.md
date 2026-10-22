@@ -1,6 +1,6 @@
 # Plan: migrate enterprise applications
 
-Status: **phases 1 and 2 done, phase 2 waiting for review.** Mockups: [enterprise-apps-mockups.html](enterprise-apps-mockups.html) (open it in a browser).
+Status: **phases 1 to 3 done, phase 3 waiting for review.** Mockups: [enterprise-apps-mockups.html](enterprise-apps-mockups.html) (open it in a browser).
 
 Work one phase at a time, each on `feature/enterprise-apps` (or a branch from it), and check in with the owner after each phase.
 

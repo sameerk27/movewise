@@ -73,6 +73,10 @@
                         {
                             <li>@Report.UpdateCount app@(Report.UpdateCount == 1 ? " that's" : "s that are") already there get their settings changed to match. Nothing is taken away.</li>
                         }
+                        @if (Report.Apps.Any(a => a.Outcome == Outcome.Create && a.UsesSaml && a.IsOwnApp && !a.IsUpdate))
+                        {
+                            <li>SAML apps get their single sign-on and claims, and a new signing certificate.</li>
+                        }
                         <li>Then owners and @Report.AssignmentCount user and group assignment@(Report.AssignmentCount == 1 ? "" : "s"), each with its app role.</li>
                         @if (Report.BlockedSkipped && Report.BlockedCount > 0)
                         {
@@ -191,7 +195,11 @@
                     <h2>After deploying</h2>
                     <ul class="plan-list">
                         <li>Grant the apps' API permissions in @Run.DestinationName once you've checked them (Enterprise apps → the app → Permissions). Pre-flight listed them; Movewise didn't grant any.</li>
-                        <li>Set up by hand what pre-flight listed: client secrets and certificates, single sign-on, provisioning.</li>
+                        @if (Run.Steps.Any(s => s.Status == StepStatus.Done && s.Body["saml"] is not null && s.UpdateOf is null))
+                        {
+                            <li>Give each SAML app's vendor its new signing certificate, or the app's new federation metadata, before moving users over. The thumbprints are listed above.</li>
+                        }
+                        <li>Set up by hand what pre-flight listed: client secrets and certificates, provisioning, apps to add from the gallery.</li>
                         <li>Members of new or matched groups get the apps through their groups: check the groups have the right members.</li>
                         <li>Keep the results file with your change records. It lists every app's ID in @Run.DestinationName.</li>
                     </ul>
