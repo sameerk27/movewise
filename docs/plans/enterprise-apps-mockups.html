@@ -1,0 +1,251 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Enterprise apps plan</title>
+<style>
+:root {
+  --ink: #17191E; --muted: #5B5F68; --ground: #F5F4F0; --surface: #FFFFFF; --sunk: #FAF9F6; --line: #E3E1DA; --line-soft: #EEECE6;
+  --accent: #1E4FA8; --accent-soft: #F4F7FD; --info-soft: #E8EEF9;
+  --ok: #17603C; --ok-soft: #E6F3EC; --warn: #8A3F06; --warn-soft: #FDF1E3; --bad: #9B1C13; --bad-soft: #FCEBEA;
+  --neutral: #454850; --neutral-soft: #EEECE6; --side: #17191E;
+}
+* { box-sizing: border-box; }
+body { margin: 0; background: var(--ground); color: var(--ink); font-family: "Segoe UI Variable Text", "Segoe UI", system-ui, sans-serif; font-size: 15px; line-height: 1.55; }
+.doc { max-width: 1180px; margin: 0 auto; padding: 32px 24px 80px; }
+h1 { font-size: 30px; margin: 0 0 6px; }
+h2 { font-size: 21px; margin: 40px 0 12px; padding-top: 12px; border-top: 1px solid var(--line); }
+h3 { font-size: 16px; margin: 20px 0 8px; }
+p, li { color: #2B2E35; }
+.muted { color: var(--muted); }
+.small { font-size: 13px; }
+code { font-family: "Cascadia Mono", Consolas, monospace; font-size: 13px; background: #ECEAE4; padding: 1px 5px; border-radius: 4px; }
+table.t { width: 100%; border-collapse: collapse; background: var(--surface); border: 1px solid var(--line); border-radius: 10px; overflow: hidden; margin: 8px 0 16px; }
+.t th, .t td { text-align: left; padding: 9px 12px; border-bottom: 1px solid var(--line-soft); vertical-align: top; font-size: 14px; }
+.t th { background: var(--sunk); font-size: 12px; text-transform: uppercase; letter-spacing: .04em; color: var(--muted); }
+.t tr:last-child td { border-bottom: 0; }
+.decide { background: var(--info-soft); border-left: 4px solid var(--accent); border-radius: 8px; padding: 12px 16px; margin: 10px 0; }
+.decide b { color: var(--accent); }
+.pill { display: inline-flex; align-items: center; padding: 2px 9px; border-radius: 999px; font-size: 12px; font-weight: 500; white-space: nowrap; }
+.pill.ok { background: var(--ok-soft); color: var(--ok); } .pill.warn { background: var(--warn-soft); color: var(--warn); }
+.pill.bad { background: var(--bad-soft); color: var(--bad); } .pill.info { background: var(--info-soft); color: var(--accent); }
+.pill.neutral { background: var(--neutral-soft); color: var(--neutral); }
+
+/* Mockup frame: a slice of the real app layout. */
+.mock { border: 1px solid var(--line); border-radius: 12px; overflow: hidden; box-shadow: 0 14px 40px rgba(23,25,30,.14); margin: 14px 0 8px; background: var(--ground); display: grid; grid-template-columns: 190px 1fr; }
+.mock .side { background: var(--side); color: #C9CBD0; padding: 16px 10px; font-size: 13px; }
+.mock .side b { color: #fff; display: block; padding: 2px 8px 14px; font-size: 15px; }
+.mock .side span { display: block; padding: 7px 10px; border-radius: 7px; }
+.mock .side span.on { background: #2A2D35; color: #fff; }
+.mock .main { min-width: 0; }
+.mhead { background: var(--surface); border-bottom: 1px solid var(--line); padding: 16px 22px; }
+.mhead h4 { margin: 0; font-size: 20px; }
+.steps { display: flex; gap: 10px; align-items: center; margin-top: 10px; font-size: 12.5px; color: var(--muted); flex-wrap: wrap; }
+.steps i { font-style: normal; width: 20px; height: 20px; border-radius: 50%; display: inline-flex; align-items: center; justify-content: center; border: 1.5px solid #C9C6BD; font-size: 11px; margin-right: 5px; }
+.steps .d i { background: #1F7A4D; border-color: #1F7A4D; color: #fff; } .steps .c { color: var(--ink); font-weight: 600; } .steps .c i { background: var(--accent); border-color: var(--accent); color: #fff; }
+.mbody { padding: 16px 22px 20px; display: flex; flex-direction: column; gap: 12px; }
+.chips { display: flex; gap: 6px; flex-wrap: wrap; }
+.chip { font-size: 12.5px; padding: 5px 11px; border-radius: 999px; border: 1px solid #D4D1C8; background: var(--surface); }
+.chip.on { background: var(--ink); color: #fff; border-color: var(--ink); }
+.card { background: var(--surface); border: 1px solid var(--line); border-radius: 10px; }
+.rows .r { display: grid; align-items: center; gap: 10px; padding: 9px 14px; border-bottom: 1px solid var(--line-soft); font-size: 13px; }
+.rows .r:last-child { border-bottom: 0; }
+.rows .h { background: var(--sunk); font-size: 11px; font-weight: 600; text-transform: uppercase; letter-spacing: .04em; color: var(--muted); }
+.cols-d { grid-template-columns: 24px 2fr 1.3fr 1fr 1.6fr 130px; }
+.cols-m { grid-template-columns: 1.5fr 18px 1.6fr 1.2fr 60px; }
+.cols-p { grid-template-columns: 1.6fr 1.4fr 1fr; }
+.r .s { color: var(--muted); font-size: 12px; display: block; }
+.cb { width: 14px; height: 14px; border: 1.5px solid var(--accent); border-radius: 3px; background: var(--accent); display: inline-block; }
+.cb.off { background: #fff; border-color: #9a9ca3; }
+.split { display: grid; grid-template-columns: 1.35fr 1fr; gap: 12px; align-items: start; }
+.panel { padding: 14px 16px; font-size: 13px; display: flex; flex-direction: column; gap: 8px; }
+.label { font-size: 11px; font-weight: 600; letter-spacing: .06em; text-transform: uppercase; color: var(--muted); }
+.find { display: flex; gap: 10px; padding: 11px 14px; border-bottom: 1px solid var(--line-soft); font-size: 13px; }
+.find:last-child { border-bottom: 0; }
+.find .ic { width: 20px; height: 20px; border-radius: 50%; flex-shrink: 0; display: flex; align-items: center; justify-content: center; font-size: 11px; font-weight: 700; }
+.find.w { background: #FFFBF5; } .find.w .ic { background: var(--warn-soft); color: var(--warn); }
+.find.b .ic { background: var(--bad-soft); color: var(--bad); } .find.i .ic { background: var(--info-soft); color: var(--accent); }
+.find b { display: block; }
+.btn { display: inline-block; font-size: 12.5px; font-weight: 600; padding: 6px 12px; border-radius: 7px; border: 1px solid #D4D1C8; background: #fff; }
+.btn.p { background: var(--accent); color: #fff; border-color: var(--accent); }
+.stats { display: grid; grid-template-columns: repeat(4, 1fr); gap: 10px; }
+.stat { padding: 10px 14px; } .stat b { font-size: 22px; display: block; }
+.caption { font-size: 13px; color: var(--muted); margin: 0 0 6px; }
+ol.phases li { margin-bottom: 8px; }
+@media (max-width: 760px) { .mock { grid-template-columns: 1fr; } .mock .side { display: none; } .split { grid-template-columns: 1fr; } .stats { grid-template-columns: repeat(2, 1fr); } }
+</style>
+</head>
+<body>
+<div class="doc">
+
+<h1>Plan: migrate enterprise applications</h1>
+<p class="muted">Movewise feature proposal · revision 2: a separate Applications section, linked to policy migration · for review before any code is written</p>
+
+<h2>1. Goal</h2>
+<p>Today, apps are only a <i>dependency</i> of policies: when a Conditional Access policy names an app, Movewise matches it by app ID, and if the destination doesn't have it, the admin is told to add it by hand. This feature adds an <b>Applications</b> section of its own, with its own steps, that migrates enterprise applications and app registrations with their settings, sign-on and user and group assignments. The policy migration stays as it is, and the two are linked so policies find the apps migrated for them.</p>
+
+<h2>2. Decisions</h2>
+<div class="decide"><b>Structure:</b> a separate <b>Applications</b> section in the sidebar, with its own flow (Choose apps → Map users &amp; groups → Pre-flight → Deploy). It uses the tenants signed in on Connect. The policy flow (Discover, Map, Pre-flight, Deploy) doesn't change, apart from recognising migrated apps.</div>
+<div class="decide"><b>Scope:</b> <b>enterprise apps</b> (gallery and multi-tenant apps, same app ID in every tenant) and the source's own <b>app registrations</b> (recreated with a new app ID). Microsoft's first-party apps and managed identities are left out.</div>
+<div class="decide"><b>API permissions:</b> copied onto the app, but <b>admin consent is never granted by Movewise</b>. They're listed for an admin to grant.</div>
+<div class="decide"><b>SAML single sign-on:</b> migrated, with a <b>new signing certificate</b> (the old private key can't be exported). The results list each SAML app whose vendor side needs the new certificate or metadata.</div>
+
+<h2>3. How the two flows link</h2>
+<table class="t">
+  <thead><tr><th>Situation</th><th>What Movewise does</th></tr></thead>
+  <tbody>
+    <tr><td>Apps migrated first (recommended order)</td><td>Each run records <i>source app ID → destination app ID</i> for the destination tenant. The policy Map screen reads it: an app registration recreated with a new app ID matches automatically as <span class="pill ok">Migrated by Movewise</span>, and the policies are rewritten with the new ID.</td></tr>
+    <tr><td>A policy needs an app that isn't in the destination</td><td>The policy Map entry says <i>"Not in the destination yet"</i> with a <b>Migrate it in Applications</b> link that opens the Applications section with that app already ticked.</td></tr>
+    <tr><td>Policies deployed before their apps</td><td>Pre-flight warns which policies point at apps still missing, so they're not created pointing at nothing.</td></tr>
+    <tr><td>Apps only, no policy migration</td><td>Fully supported: the Applications section works on its own, for example to move just the SSO apps.</td></tr>
+  </tbody>
+</table>
+
+<h2>4. What moves, and what doesn't</h2>
+<table class="t">
+  <thead><tr><th>Item</th><th>Enterprise app (same app ID)</th><th>App registration (new app ID)</th></tr></thead>
+  <tbody>
+    <tr><td>The app itself</td><td>Service principal created for the same app ID (gallery apps from their template)</td><td>App registration and its service principal created, with a new app ID</td></tr>
+    <tr><td>Properties</td><td>Assignment required, visible to users, notes, home page, logo</td><td>Same, plus redirect URIs, app roles (same role IDs), optional claims, exposed API scopes</td></tr>
+    <tr><td>Users and groups assigned</td><td colspan="2">Recreated with the destination's matched users and groups, keeping each app role</td></tr>
+    <tr><td>Owners</td><td colspan="2">Matched users added as owners</td></tr>
+    <tr><td>SAML SSO</td><td colspan="2">SSO mode, identifier, reply URL, sign-on URL, relay state, claims; <b>new signing certificate</b></td></tr>
+    <tr><td>API permissions</td><td>Listed (granted in the source)</td><td>Requested permissions copied to the app; consent listed</td></tr>
+    <tr><td><b>Not migrated</b></td><td colspan="2">Client secrets and certificate private keys, provisioning (SCIM) settings and credentials, password-based SSO credentials, Application Proxy connectors, consent grants. All listed under "Set up by hand".</td></tr>
+  </tbody>
+</table>
+
+<h2>5. Mockups</h2>
+
+<h3>Step 1 · Choose apps</h3>
+<p class="caption">A new <b>Applications</b> item in the sidebar opens its own four steps. Each app shows its kind, how users sign in, who's assigned, and what it needs.</p>
+<div class="mock"><div class="side"><b>Movewise</b><span>Migrations</span><span class="on">Applications</span><span>Compare</span><span>Snapshots</span><span>Baselines</span><span>Drift monitor</span></div>
+<div class="main">
+  <div class="mhead"><h4>Choose applications to migrate</h4><span class="muted small">Everything Movewise found in Contoso (demo). Microsoft's own apps are left out: every tenant has them.</span><div class="steps"><span class="c"><i>1</i>Choose apps</span>—<span><i>2</i>Map users &amp; groups</span>—<span><i>3</i>Pre-flight</span>—<span><i>4</i>Deploy</span></div></div>
+  <div class="mbody">
+    <div class="chips"><span class="chip on">All 18</span><span class="chip">Enterprise apps 12</span><span class="chip">App registrations 6</span><span class="chip">Used by policies 4</span></div>
+    <div class="card rows">
+      <div class="r h cols-d"><span></span><span>Application</span><span>Kind</span><span>Sign-on</span><span>Assigned to</span><span>Status</span></div>
+      <div class="r cols-d"><span class="cb"></span><span><b>Salesforce</b><span class="s">Gallery app · used by 1 policy</span></span><span>Enterprise app</span><span>SAML</span><span class="muted">3 groups, 2 app roles</span><span><span class="pill warn">New certificate</span></span></div>
+      <div class="r cols-d"><span class="cb"></span><span><b>Zoom</b><span class="s">Multi-tenant app</span></span><span>Enterprise app</span><span>OpenID Connect</span><span class="muted">1 group</span><span><span class="pill ok">Ready</span></span></div>
+      <div class="r cols-d"><span class="cb"></span><span><b>Contoso HR Portal</b><span class="s">Registered in Contoso · used by 3 policies</span></span><span>App registration</span><span>OpenID Connect</span><span class="muted">2 groups · 4 API permissions</span><span><span class="pill warn">Needs consent</span></span></div>
+      <div class="r cols-d"><span class="cb"></span><span><b>Payroll Sync</b><span class="s">Registered in Contoso</span></span><span>App registration</span><span>Daemon (app-only)</span><span class="muted">No users · 1 client secret</span><span><span class="pill warn">New secret needed</span></span></div>
+      <div class="r cols-d"><span class="cb off"></span><span><b>ServiceNow</b><span class="s">Gallery app</span></span><span>Enterprise app</span><span>SAML + provisioning</span><span class="muted">5 groups</span><span><span class="pill neutral">Partial</span></span></div>
+    </div>
+  </div>
+</div></div>
+
+<h3>Step 2 · Map users &amp; groups</h3>
+<p class="caption">The same matching as the policy flow, limited to the users, groups and owners the chosen apps are assigned to.</p>
+<div class="mock"><div class="side"><b>Movewise</b><span>Migrations</span><span class="on">Applications</span><span>Compare</span><span>Snapshots</span><span>Baselines</span><span>Drift monitor</span></div>
+<div class="main">
+  <div class="mhead"><h4>Map users &amp; groups</h4><div class="steps"><span class="d"><i>✓</i>Choose apps</span>—<span class="c"><i>2</i>Map users &amp; groups</span>—<span><i>3</i>Pre-flight</span>—<span><i>4</i>Deploy</span></div></div>
+  <div class="mbody">
+    <div class="chips"><span class="chip on">Groups · 9 of 10</span><span class="chip">Users · 4 of 4</span><span class="chip">Owners · 2 of 3</span></div>
+    <div class="card rows">
+      <div class="r h cols-m"><span>In Contoso</span><span></span><span>In Fabrikam</span><span>Match</span><span>Apps</span></div>
+      <div class="r cols-m"><span><b>Sales team</b><span class="s">sales</span></span><span>→</span><span>Sales team</span><span><span class="pill ok">Auto · same name</span></span><span>2</span></div>
+      <div class="r cols-m"><span><b>HR staff</b><span class="s">hrstaff</span></span><span>→</span><span>Human Resources</span><span><span class="pill ok">Auto · mail nickname</span></span><span>1</span></div>
+      <div class="r cols-m"><span><b>Salesforce admins</b><span class="s">sfadmins</span></span><span>→</span><span class="muted">Choose a match…</span><span><span class="pill bad">Unresolved</span></span><span>1</span></div>
+    </div>
+  </div>
+</div></div>
+
+<h3>Step 3 · Pre-flight</h3>
+<p class="caption">What the admin must know before apps are created. Nothing here grants consent or creates secrets on the admin's behalf.</p>
+<div class="mock"><div class="side"><b>Movewise</b><span>Migrations</span><span class="on">Applications</span><span>Compare</span><span>Snapshots</span><span>Baselines</span><span>Drift monitor</span></div>
+<div class="main">
+  <div class="mhead"><h4>Pre-flight checks</h4><div class="steps"><span class="d"><i>✓</i>Choose apps</span>—<span class="d"><i>✓</i>Map users &amp; groups</span>—<span class="c"><i>3</i>Pre-flight</span>—<span><i>4</i>Deploy</span></div></div>
+  <div class="mbody">
+    <div class="stats"><div class="card stat"><b>4</b><span class="muted small">apps to create</span></div><div class="card stat"><b style="color:var(--warn)">1</b><span class="muted small">already there</span></div><div class="card stat"><b style="color:var(--bad)">1</b><span class="muted small">blocked</span></div><div class="card stat"><b>11</b><span class="muted small">assignments</span></div></div>
+    <div class="card">
+      <div class="find w"><span class="ic">!</span><div><b>API permissions need admin consent · 2 apps, 7 permissions</b><span class="muted">Contoso HR Portal: Microsoft Graph User.Read, Group.Read.All (delegated)… Payroll Sync: User.Read.All (application). Movewise adds them to the apps but doesn't grant them.</span></div></div>
+      <div class="find w"><span class="ic">!</span><div><b>New SAML signing certificates · 1 app</b><span class="muted">Salesforce gets a new certificate in Fabrikam. Upload it, or the new federation metadata, to Salesforce before moving users over.</span></div></div>
+      <div class="find w"><span class="ic">!</span><div><b>Client secrets and certificates can't be copied · 1 app</b><span class="muted">Payroll Sync used a client secret. Create a new one in Fabrikam and update the service that uses it.</span></div></div>
+      <div class="find w"><span class="ic">!</span><div><b>Already in Fabrikam · 1 app</b><span class="muted">Zoom is already there. Skip it, or update its settings and assignments in place.</span></div></div>
+      <div class="find b"><span class="ic">✕</span><div><b>Unmatched group · 1 app blocked</b><span class="muted">Salesforce admins has no match. Go back to Map users &amp; groups.</span></div></div>
+      <div class="find i"><span class="ic">i</span><div><b>Set up by hand · 1 app</b><span class="muted">ServiceNow user provisioning (SCIM) and its credentials aren't migrated. The app and its assignments are.</span></div></div>
+    </div>
+  </div>
+</div></div>
+
+<h3>Step 4 · Deploy, and on to the policies</h3>
+<p class="caption">Results list each new app ID. A link carries on to the policy migration, which will now find these apps.</p>
+<div class="mock"><div class="side"><b>Movewise</b><span>Migrations</span><span class="on">Applications</span><span>Compare</span><span>Snapshots</span><span>Baselines</span><span>Drift monitor</span></div>
+<div class="main">
+  <div class="mhead"><h4>Deploy applications</h4><div class="steps"><span class="d"><i>✓</i>Choose apps</span>—<span class="d"><i>✓</i>Map users &amp; groups</span>—<span class="d"><i>✓</i>Pre-flight</span>—<span class="c"><i>4</i>Deploy</span></div></div>
+  <div class="mbody">
+    <div class="card rows">
+      <div class="r h cols-p"><span>Application</span><span>Details</span><span>Status</span></div>
+      <div class="r cols-p"><span><b>Salesforce</b><span class="s">Enterprise app</span></span><span class="muted">Created from the gallery · 3 groups assigned · new signing certificate</span><span><span class="pill ok">Done</span></span></div>
+      <div class="r cols-p"><span><b>Contoso HR Portal</b><span class="s">App registration</span></span><span class="muted">New app ID 8e41…c0f7 · 2 groups assigned · 4 permissions awaiting consent</span><span><span class="pill ok">Done</span></span></div>
+      <div class="r cols-p"><span><b>Payroll Sync</b><span class="s">App registration</span></span><span class="muted">New app ID 2b9c…41aa · create a new client secret</span><span><span class="pill ok">Done</span></span></div>
+    </div>
+    <div style="display:flex; gap:8px; justify-content:flex-end; flex-wrap:wrap"><span class="btn">Download results</span><span class="btn">Roll back this run</span><span class="btn p">Migrate the policies that use these apps →</span></div>
+  </div>
+</div></div>
+
+<h3>The link, in the policy flow · Map dependencies</h3>
+<p class="caption">The existing policy Map screen recognises migrated apps, and links to Applications for any that are missing.</p>
+<div class="mock"><div class="side"><b>Movewise</b><span class="on">Migrations</span><span>Applications</span><span>Compare</span><span>Snapshots</span><span>Baselines</span><span>Drift monitor</span></div>
+<div class="main">
+  <div class="mhead"><h4>Map dependencies</h4><div class="steps"><span class="d"><i>✓</i>Connect</span>—<span class="d"><i>✓</i>Discover</span>—<span class="c"><i>3</i>Map dependencies</span>—<span><i>4</i>Pre-flight</span>—<span><i>5</i>Deploy</span></div></div>
+  <div class="mbody">
+    <div class="chips"><span class="chip">Groups · 2 of 4</span><span class="chip on">Apps · 2 of 3</span><span class="chip">Named locations · 1 of 1</span></div>
+    <div class="split">
+      <div class="card rows">
+        <div class="r h cols-m"><span>In Contoso</span><span></span><span>In Fabrikam</span><span>Match</span><span>Used by</span></div>
+        <div class="r cols-m"><span><b>Zoom</b><span class="s">app ID 4f6e…a1c2</span></span><span>→</span><span>Zoom</span><span><span class="pill ok">Auto · same app ID</span></span><span>2</span></div>
+        <div class="r cols-m"><span><b>Contoso HR Portal</b><span class="s">app ID 1c0a…5d93</span></span><span>→</span><span>Contoso HR Portal<span class="s">app ID 8e41…c0f7</span></span><span><span class="pill ok">Migrated by Movewise</span></span><span>3</span></div>
+        <div class="r cols-m" style="background:#FFF8F0; box-shadow: inset 3px 0 0 #B45309"><span><b>Legacy Intranet</b><span class="s">app ID 77aa…0b12</span></span><span>→</span><span class="muted">Not in Fabrikam yet</span><span><span class="pill bad">Unresolved</span></span><span>1</span></div>
+      </div>
+      <div class="card panel">
+        <span class="label">Application</span>
+        <b style="font-size:15px">Legacy Intranet</b>
+        <span class="muted">Registered in Contoso · used by 1 policy (CA007)</span>
+        <span>This app isn't in Fabrikam yet. Migrate it first, then match again.</span>
+        <div style="display:flex; gap:8px; flex-wrap:wrap; margin-top:4px"><span class="btn p">Migrate it in Applications →</span><span class="btn">Remove from the policies</span></div>
+      </div>
+    </div>
+  </div>
+</div></div>
+
+<h2>6. How it's built</h2>
+<table class="t">
+  <thead><tr><th>Area</th><th>Change</th></tr></thead>
+  <tbody>
+    <tr><td><b>Screens</b></td><td>A new <b>Applications</b> sidebar item with four pages (choose, map, pre-flight, deploy) and its own step bar. The pages reuse the existing table, mapping and pre-flight components, so they look and behave like the policy flow.</td></tr>
+    <tr><td><b>State</b></td><td>Its own state, separate from the policy migration's, so the two never overwrite each other's selection or mapping. Both use the tenants signed in on Connect.</td></tr>
+    <tr><td><b>Registry</b></td><td>Two new types used only by this section: <code>enterpriseApp</code> (<code>v1.0/servicePrincipals</code>, leaving out Microsoft first-party apps and managed identities) and <code>appRegistration</code> (<code>v1.0/applications</code>). References: owners, assigned users and groups.</td></tr>
+    <tr><td><b>Export</b></td><td>Read each app with its <code>appRoleAssignedTo</code>, owners, SSO settings, claims mapping policy and, for registrations, the full manifest. Record what can't be copied for "Set up by hand".</td></tr>
+    <tr><td><b>App ID map</b></td><td>New: each app run saves <i>source app ID → destination app ID</i> for the destination tenant, next to its run files. The policy Matcher checks it before reporting an app as missing.</td></tr>
+    <tr><td><b>Pre-flight</b></td><td>New findings: consent needed, new SAML certificate, secrets to recreate, provisioning by hand, apps already there (skip or update in place), unmatched users and groups. Role check: Application Administrator or Cloud Application Administrator. In the policy flow: a warning for policies pointing at apps still missing.</td></tr>
+    <tr><td><b>Deploy</b></td><td>The existing engine, as its own run kind: apps (gallery apps through <code>applicationTemplates/{id}/instantiate</code>, others by creating the service principal or registration) → SSO settings and new certificate → owners and assignments. Progress saved after each step, resumable.</td></tr>
+    <tr><td><b>Rollback</b></td><td>Deletes the apps and assignments the run created (deleted apps stay restorable for 30 days in Entra ID), puts back settings it changed on existing apps, and removes its entries from the app ID map.</td></tr>
+    <tr><td><b>Compare &amp; drift</b></td><td>Apps can be included in comparisons and snapshots: an assignment removed or an SSO setting changed shows up as drift.</td></tr>
+    <tr><td><b>Demo</b></td><td>Contoso gets sample apps (a gallery SAML app, a multi-tenant app, two app registrations) so the whole flow, and the link to policies, can be tried.</td></tr>
+    <tr><td><b>Tests</b></td><td>Core tests with the fake Graph: export, deploy order, app ID map written and read by the policy Matcher, rollback, and that consent is never granted.</td></tr>
+  </tbody>
+</table>
+
+<h2>7. Phases</h2>
+<ol class="phases">
+  <li><b>Applications section + enterprise apps:</b> sidebar item, four steps, enterprise apps (same app ID) with settings, owners and assignments, rollback, demo, tests.</li>
+  <li><b>App registrations + the link:</b> recreate with a new app ID, the app ID map, "Migrated by Movewise" and "Migrate it in Applications" on the policy Map screen, permissions listed, secrets under "Set up by hand".</li>
+  <li><b>SAML SSO:</b> SSO settings and claims, new signing certificate, gallery-template instantiation.</li>
+  <li><b>Docs and site:</b> README, a website page "Migrate enterprise applications between tenants", release notes.</li>
+</ol>
+<p class="muted small">Each phase ships on its own and is tested in the demo before the next.</p>
+
+<h2>8. Risks</h2>
+<ul>
+  <li><b>Gallery templates:</b> some gallery apps can't be instantiated by template; those fall back to "Set up by hand" with the template name.</li>
+  <li><b>Hard-coded app IDs:</b> scripts, daemons or mobile apps that hard-code an app registration's old app ID keep pointing at the source. The results list every new app ID.</li>
+  <li><b>Order:</b> if the policies are migrated before the apps, they can't point at apps that don't exist yet. Pre-flight warns, and the policy Map links straight to Applications.</li>
+</ul>
+
+</div>
+</body>
+</html>
+
