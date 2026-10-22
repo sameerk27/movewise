@@ -1,4 +1,4 @@
-<nav class="steps" aria-label="Migration steps">
+<nav class="steps" aria-label="@(Applications ? "Application migration steps" : "Migration steps")">
     @for (var i = 0; i < Steps.Length; i++)
     {
         var (name, href) = Steps[i];
@@ -28,8 +28,21 @@
 @code {
     [Parameter, EditorRequired] public int Current { get; set; }
 
+    /// <summary>The Applications section's own steps rather than the policy migration's.</summary>
+    [Parameter] public bool Applications { get; set; }
+
+    (string Name, string? Href)[] Steps => Applications ? AppSteps : PolicySteps;
+
     // A step links back only once it's been reached.
-    static readonly (string Name, string? Href)[] Steps =
+    static readonly (string Name, string? Href)[] AppSteps =
+    [
+        ("Choose apps", "apps"),
+        ("Map users & groups", "apps/map"),
+        ("Pre-flight", "apps/preflight"),
+        ("Deploy", "apps/deploy"),
+    ];
+
+    static readonly (string Name, string? Href)[] PolicySteps =
     [
         ("Connect", ""),
         ("Discover", "discover"),

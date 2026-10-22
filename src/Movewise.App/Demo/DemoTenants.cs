@@ -11,7 +11,8 @@ namespace Movewise.App.Demo;
 /// <summary>
 /// Two made-up tenants, Contoso (source) and Fabrikam (destination), for trying Movewise without real tenants.
 /// They're built so every screen has something to show: a name conflict, a missing license, a group with no match,
-/// a domain to map, an address that isn't in the destination, sublabels, and Teams group assignments.
+/// a domain to map, an address that isn't in the destination, sublabels, Teams group assignments, and enterprise apps
+/// (one already in the destination, one assigned to a group with no match, one with SAML to set up by hand).
 /// Everything stays in memory; deploying changes only the demo destination.
 /// </summary>
 static class DemoTenants
@@ -33,6 +34,21 @@ static class DemoTenants
     const string CorporateFilter = "a5000000-0000-4000-8000-000000000001";
     const string ConfidentialLabel = "a6000000-0000-4000-8000-000000000001";
     const string FinanceLabel = "a6000000-0000-4000-8000-000000000002";
+    const string Anna = "a2000000-0000-4000-8000-000000000002";
+
+    // Other organizations' apps: the same app ID in both tenants.
+    const string GraphApp = "00000003-0000-0000-c000-000000000000";
+    const string MicrosoftOwner = "f8cdef31-a31e-4b4a-93e4-5f571e91255a";
+    const string DefaultRole = "00000000-0000-0000-0000-000000000000";
+    const string UserReadAll = "df021288-bdef-4463-88db-98f22de89214";
+    static readonly (string AppId, string Name)[] SaasApps =
+    [
+        ("c1000000-0000-4000-8000-000000000001", "Zoom"),
+        ("c1000000-0000-4000-8000-000000000002", "Miro"),
+        ("c1000000-0000-4000-8000-000000000003", "Slack"),
+        ("c1000000-0000-4000-8000-000000000004", "DocuSign"),
+    ];
+    const string ZoomAdminRole = "d1000000-0000-4000-8000-000000000001";
 
     public static (TenantConnection Source, TenantConnection Destination) Create() =>
         (Connection(TenantRole.Source, Contoso(), SourceGraph(), SourceExchange(), SourceCompliance(), SourceTeams()),
@@ -109,8 +125,43 @@ static class DemoTenants
             J($$"""{ "id": "{{Executives}}", "displayName": "Executives", "mailNickname": "execs", "mail": "execs@contoso.com", "securityEnabled": true, "mailEnabled": true, "groupTypes": ["Unified"] }"""))
         .Add("v1.0/users",
             J($$"""{ "id": "{{BreakGlassUser}}", "displayName": "Break glass 1", "userPrincipalName": "breakglass1@contoso.onmicrosoft.com", "mail": null }"""),
-            J("""{ "id": "a2000000-0000-4000-8000-000000000002", "displayName": "Anna Lindqvist", "userPrincipalName": "anna@contoso.com", "mail": "anna@contoso.com" }"""))
-        .Add("v1.0/servicePrincipals")
+            J($$"""{ "id": "{{Anna}}", "displayName": "Anna Lindqvist", "userPrincipalName": "anna@contoso.com", "mail": "anna@contoso.com" }"""))
+
+        // Applications: Microsoft Graph (Microsoft's, never migrated) and four SaaS apps with their access.
+        .Add("v1.0/servicePrincipals",
+            J($$"""{ "id": "a7000000-0000-4000-8000-000000000000", "appId": "{{GraphApp}}", "displayName": "Microsoft Graph", "appOwnerOrganizationId": "{{MicrosoftOwner}}", "servicePrincipalType": "Application", "appRoles": [ { "id": "{{UserReadAll}}", "value": "User.Read.All" } ] }"""),
+            J($$"""
+            { "id": "a7000000-0000-4000-8000-000000000001", "appId": "{{SaasApps[0].AppId}}", "displayName": "Zoom", "publisherName": "Zoom Video Communications",
+              "appOwnerOrganizationId": "4f6e0000-0000-4000-8000-0000000000a1", "servicePrincipalType": "Application", "accountEnabled": true,
+              "appRoleAssignmentRequired": true, "preferredSingleSignOnMode": "oidc", "homepage": "https://zoom.us", "notes": "Video meetings for all staff.",
+              "tags": ["WindowsAzureActiveDirectoryIntegratedApp"],
+              "__appRoleAssignedTo": [ { "id": "z1", "principalType": "Group", "principalId": "{{AllStaff}}", "appRoleId": "{{DefaultRole}}" },
+                                       { "id": "z2", "principalType": "User", "principalId": "{{Anna}}", "appRoleId": "{{ZoomAdminRole}}" } ],
+              "__owners": [ { "@odata.type": "#microsoft.graph.user", "id": "{{Anna}}" } ] }
+            """),
+            J($$"""
+            { "id": "a7000000-0000-4000-8000-000000000002", "appId": "{{SaasApps[1].AppId}}", "displayName": "Miro", "publisherName": "Miro",
+              "appOwnerOrganizationId": "4f6e0000-0000-4000-8000-0000000000a2", "servicePrincipalType": "Application", "accountEnabled": true,
+              "appRoleAssignmentRequired": true, "preferredSingleSignOnMode": "oidc", "tags": ["WindowsAzureActiveDirectoryIntegratedApp", "HideApp"],
+              "__appRoleAssignedTo": [ { "id": "m1", "principalType": "Group", "principalId": "{{Executives}}", "appRoleId": "{{DefaultRole}}" } ] }
+            """),
+            J($$"""
+            { "id": "a7000000-0000-4000-8000-000000000003", "appId": "{{SaasApps[2].AppId}}", "displayName": "Slack", "publisherName": "Slack Technologies",
+              "appOwnerOrganizationId": "4f6e0000-0000-4000-8000-0000000000a3", "servicePrincipalType": "Application", "accountEnabled": true,
+              "appRoleAssignmentRequired": true, "preferredSingleSignOnMode": "oidc", "tags": ["WindowsAzureActiveDirectoryIntegratedApp"],
+              "__appRoleAssignedTo": [ { "id": "s1", "principalType": "Group", "principalId": "{{AllStaff}}", "appRoleId": "{{DefaultRole}}" } ],
+              "__appRoleAssignments": [ { "id": "s2", "resourceId": "a7000000-0000-4000-8000-000000000000", "resourceDisplayName": "Microsoft Graph", "appRoleId": "{{UserReadAll}}" } ] }
+            """),
+            J($$"""
+            { "id": "a7000000-0000-4000-8000-000000000004", "appId": "{{SaasApps[3].AppId}}", "displayName": "DocuSign", "publisherName": "DocuSign",
+              "appOwnerOrganizationId": "4f6e0000-0000-4000-8000-0000000000a4", "servicePrincipalType": "Application", "accountEnabled": true,
+              "appRoleAssignmentRequired": false, "preferredSingleSignOnMode": "saml", "loginUrl": "https://account.docusign.com",
+              "tags": ["WindowsAzureActiveDirectoryIntegratedApp"], "keyCredentials": [ { "keyId": "k1", "usage": "Sign" }, { "keyId": "k2", "usage": "Verify" } ],
+              "__appRoleAssignedTo": [ { "id": "d1", "principalType": "Group", "principalId": "{{IntunePilot}}", "appRoleId": "{{DefaultRole}}" } ] }
+            """))
+        .Add("v1.0/oauth2PermissionGrants", J("""
+            { "id": "g1", "clientId": "a7000000-0000-4000-8000-000000000001", "resourceId": "a7000000-0000-4000-8000-000000000000", "consentType": "AllPrincipals", "scope": "openid profile email User.Read" }
+            """))
 
         // Entra ID
         .Add("v1.0/identity/conditionalAccess/namedLocations", J($$"""
@@ -332,7 +383,16 @@ static class DemoTenants
         .Add("v1.0/users",
             J("""{ "id": "b2000000-0000-4000-8000-000000000001", "displayName": "Break glass 1", "userPrincipalName": "breakglass1@fabrikam.onmicrosoft.com", "mail": null }"""),
             J("""{ "id": "b2000000-0000-4000-8000-000000000002", "displayName": "Anna Lindqvist", "userPrincipalName": "anna@fabrikam.com", "mail": "anna@fabrikam.com" }"""))
-        .Add("v1.0/servicePrincipals")
+        // Slack is already here, set up differently and with no one assigned.
+        .KnowsApps(SaasApps)
+        .Add("v1.0/servicePrincipals",
+            J($$"""{ "id": "b7000000-0000-4000-8000-000000000000", "appId": "{{GraphApp}}", "displayName": "Microsoft Graph", "appOwnerOrganizationId": "{{MicrosoftOwner}}", "servicePrincipalType": "Application" }"""),
+            J($$"""
+            { "id": "b7000000-0000-4000-8000-000000000003", "appId": "{{SaasApps[2].AppId}}", "displayName": "Slack", "publisherName": "Slack Technologies",
+              "appOwnerOrganizationId": "4f6e0000-0000-4000-8000-0000000000a3", "servicePrincipalType": "Application", "accountEnabled": true,
+              "appRoleAssignmentRequired": false, "tags": ["WindowsAzureActiveDirectoryIntegratedApp"] }
+            """))
+        .Add("v1.0/oauth2PermissionGrants")
         .Add("v1.0/identity/conditionalAccess/namedLocations")
         .Add("v1.0/policies/authenticationStrengthPolicies")
         .Add("v1.0/identity/conditionalAccess/policies", J("""

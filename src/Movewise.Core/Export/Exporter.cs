@@ -1,3 +1,4 @@
+using System.Collections.Concurrent;
 using System.Text.Json.Nodes;
 using Movewise.Core.Registry;
 
@@ -281,6 +282,137 @@ public static class Exporter
     /// <summary>Which groups each Teams policy of a type is assigned to, and in what order.</summary>
     static async Task<IReadOnlyList<JsonObject>> TeamsGroupAssignmentsAsync(IPowerShell teams, string policyType, CancellationToken ct) =>
         await teams.InvokeAsync("Get-CsGroupPolicyAssignment", new Dictionary<string, JsonNode?> { ["PolicyType"] = policyType }, ct);
+
+    /// <summary>
+    /// Reads the source's enterprise apps for the Applications section: other organizations' apps, such as multi-tenant
+    /// SaaS apps, which have the same app ID in every tenant. Microsoft's own apps, managed identities and the source's
+    /// own app registrations are left out. Each comes with the users and groups assigned to it ("assignedUsers",
+    /// "assignedGroups", each item a principal and app role), its owners ("owners", users only), the API permissions
+    /// granted to it ("apiPermissions", listed for the admin, never granted by Movewise) and what can't be copied
+    /// ("notMigrated"). An app whose details can't be read is left out with a warning.
+    /// </summary>
+    public static async Task<ExportResult> ExportAppsAsync(
+        IGraphReader graph, string sourceTenantId, IProgress<string>? progress = null, CancellationToken ct = default)
+    {
+        var type = ResourceRegistry.Get(ResourceRegistry.EnterpriseApp);
+        progress?.Report("Reading enterprise apps…");
+        var listed = (await graph.GetCollectionAsync(type.ListPath, ct))
+            .Where(item => type.Include!(item) && !string.Equals(Text(item, "appOwnerOrganizationId"), sourceTenantId, StringComparison.OrdinalIgnoreCase))
+            .ToList();
+
+        // The APIs apps are granted permissions on (Microsoft Graph, mostly), read once each for their names.
+        var resources = new ConcurrentDictionary<string, Lazy<Task<JsonObject?>>>(StringComparer.OrdinalIgnoreCase);
+        var results = new ExportedResource?[listed.Count];
+        var warnings = new ExportWarning?[listed.Count];
+        var done = 0;
+        await Parallel.ForEachAsync(
+            Enumerable.Range(0, listed.Count),
+            new ParallelOptions { MaxDegreeOfParallelism = Parallelism, CancellationToken = ct },
+            async (index, token) =>
+            {
+                try
+                {
+                    results[index] = await ReadAppAsync(graph, type, listed[index], resources, token);
+                }
+                catch (Exception ex) when (ex is not OperationCanceledException)
+                {
+                    warnings[index] = new ExportWarning(type, $"{Text(listed[index], "displayName")}: {ex.Message}");
+                }
+                progress?.Report($"Read {Interlocked.Increment(ref done)} of {listed.Count} apps…");
+            });
+
+        return new ExportResult(
+            results.OfType<ExportedResource>().OrderBy(r => r.DisplayName, StringComparer.OrdinalIgnoreCase).ToList(),
+            warnings.OfType<ExportWarning>().ToList());
+    }
+
+    static async Task<ExportedResource> ReadAppAsync(
+        IGraphReader graph, ResourceType type, JsonObject raw, ConcurrentDictionary<string, Lazy<Task<JsonObject?>>> resources, CancellationToken ct)
+    {
+        var id = Text(raw, "id");
+        var app = $"v1.0/servicePrincipals/{Uri.EscapeDataString(id)}";
+        var settings = Normalizer.Normalize(raw, type);
+
+        // Assignment IDs mean nothing in another tenant: who, and with which app role, is what's kept.
+        var assigned = await graph.GetCollectionAsync($"{app}/appRoleAssignedTo", ct);
+        JsonArray Assigned(string principalType) => new(assigned
+            .Where(a => Text(a, "principalType") == principalType)
+            .Select(a => (JsonNode?)new JsonObject { ["principalId"] = Text(a, "principalId"), ["appRoleId"] = Text(a, "appRoleId") })
+            .ToArray());
+        settings["assignedUsers"] = Assigned("User");
+        settings["assignedGroups"] = Assigned("Group");
+
+        // Apps can own apps too; only users are matched in the destination.
+        var owners = await graph.GetCollectionAsync($"{app}/owners?$select=id", ct);
+        var ownerUsers = owners.Where(o => Text(o, "@odata.type") is "" or "#microsoft.graph.user").ToList();
+        settings["owners"] = new JsonArray(ownerUsers.Select(o => (JsonNode?)Text(o, "id")).ToArray());
+
+        var permissions = new List<string>();
+        var delegated = await graph.GetCollectionAsync(
+            $"v1.0/oauth2PermissionGrants?$filter={Uri.EscapeDataString($"clientId eq {GraphQuery.Literal(id)}")}", ct);
+        foreach (var grant in delegated.GroupBy(g => Text(g, "resourceId")))
+        {
+            var scopes = grant.SelectMany(g => Text(g, "scope").Split(' ', StringSplitOptions.RemoveEmptyEntries)).Distinct(StringComparer.OrdinalIgnoreCase).Order(StringComparer.OrdinalIgnoreCase);
+            permissions.Add($"{await ResourceNameAsync(grant.Key, null)}: {string.Join(", ", scopes)} (delegated)");
+        }
+        var application = await graph.GetCollectionAsync($"{app}/appRoleAssignments", ct);
+        foreach (var grant in application.GroupBy(g => Text(g, "resourceId")))
+        {
+            var resource = await ResourceAsync(grant.Key);
+            var roles = grant.Select(g => Text(g, "appRoleId"))
+                .Select(roleId => (resource?["appRoles"] as JsonArray ?? []).OfType<JsonObject>().FirstOrDefault(r => Text(r, "id") == roleId) is { } role
+                    ? Text(role, "value") : roleId)
+                .Distinct(StringComparer.OrdinalIgnoreCase).Order(StringComparer.OrdinalIgnoreCase);
+            permissions.Add($"{await ResourceNameAsync(grant.Key, Text(grant.First(), "resourceDisplayName"))}: {string.Join(", ", roles)} (application)");
+        }
+        settings["apiPermissions"] = new JsonArray(permissions.Select(p => (JsonNode?)p).ToArray());
+
+        var notMigrated = new List<string>();
+        var otherApps = assigned.Count(a => Text(a, "principalType") == "ServicePrincipal");
+        if (otherApps > 0)
+            notMigrated.Add($"Assigned to {otherApps} other app{(otherApps == 1 ? "" : "s")}. Apps are different in the destination, so assign them again by hand.");
+        if (owners.Count > ownerUsers.Count)
+            notMigrated.Add("Owned by other apps as well as users. Only the users are added as owners.");
+        if (raw["passwordCredentials"] is JsonArray { Count: > 0 } secrets)
+            notMigrated.Add($"Client secrets ({secrets.Count}) can't be copied. Create new ones in the destination and update what uses them.");
+        switch (Text(raw, "preferredSingleSignOnMode"))
+        {
+            case "saml":
+                notMigrated.Add("SAML single sign-on isn't migrated yet. Set it up in the destination, with a new signing certificate, and give the app's vendor the new certificate or metadata.");
+                break;
+            case "password":
+                notMigrated.Add("Password-based single sign-on: users' saved credentials can't be copied. Set it up again in the destination.");
+                break;
+            default:
+                if (raw["keyCredentials"] is JsonArray { Count: > 0 } certificates)
+                    notMigrated.Add($"Certificates ({certificates.Count}) can't be copied: their private keys can't be exported. Add new ones in the destination.");
+                break;
+        }
+        settings["notMigrated"] = new JsonArray(notMigrated.Select(n => (JsonNode?)n).ToArray());
+
+        settings = (JsonObject)Normalizer.Canonicalize(settings)!;
+        return new ExportedResource(type, id, Text(raw, "displayName") is { Length: > 0 } name ? name : "(unnamed)", settings, DependencyExtractor.Extract(settings, type));
+
+        Task<JsonObject?> ResourceAsync(string resourceId) => resources.GetOrAdd(resourceId, key => new Lazy<Task<JsonObject?>>(async () =>
+        {
+            try
+            {
+                return await graph.GetObjectAsync(GraphQuery.Item("v1.0/servicePrincipals", key, "id,displayName,appRoles"), CancellationToken.None);
+            }
+            catch (Exception ex) when (ex is not OperationCanceledException)
+            {
+                return null;
+            }
+        })).Value;
+
+        async Task<string> ResourceNameAsync(string resourceId, string? known) =>
+            (await ResourceAsync(resourceId)) is { } resource && Text(resource, "displayName") is { Length: > 0 } name ? name
+            : !string.IsNullOrEmpty(known) ? known
+            : resourceId;
+    }
+
+    static string Text(JsonObject item, string name) =>
+        item[name] is JsonValue value && value.TryGetValue<string>(out var text) ? text : "";
 
     // Assignment IDs are made up from the policy and group IDs, so they mean nothing in another tenant.
     static JsonNode NormalizeAssignment(JsonObject assignment)

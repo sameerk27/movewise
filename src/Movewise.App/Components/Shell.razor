@@ -16,6 +16,7 @@
         <nav class="nav" aria-label="Main">
             @* Every migration step lives at the root ("", discover, map…); the other screens have their own routes. *@
             <a href="" class="@(InMigration ? "on" : "")">Migrations</a>
+            <a href="apps" class="@(SectionOf("apps") ? "on" : "")">Applications</a>
             <a href="compare" class="@(SectionOf("compare") ? "on" : "")">Compare</a>
             <a href="snapshots" class="@(SectionOf("snapshots") ? "on" : "")">Snapshots</a>
             <a href="baselines" class="@(SectionOf("baselines") ? "on" : "")">Baselines</a>
@@ -91,7 +92,7 @@
     }
 
     // Compare has its own entry, and is also reached from Snapshots, Drift and the end of a deployment.
-    static readonly string[] OutsideMigration = ["snapshots", "compare", "baselines", "drift"];
+    static readonly string[] OutsideMigration = ["apps", "snapshots", "compare", "baselines", "drift"];
 
     bool SectionOf(params string[] sections)
     {

@@ -192,7 +192,7 @@ public sealed class MigrationService(AuthService auth, MigrationState state, Mov
     }
 
     /// <summary>Demo runs are kept in a temporary folder, apart from real ones.</summary>
-    string? RunsRoot => state.Destination?.IsDemo == true ? Demo.DemoTenants.RunsRoot : null;
+    internal string? RunsRoot => state.Destination?.IsDemo == true ? Demo.DemoTenants.RunsRoot : null;
 
     /// <summary>Signs out of one tenant. Signing out of a demo tenant leaves the demo: both demo tenants go.</summary>
     public async Task DisconnectAsync(TenantRole role)
@@ -577,13 +577,16 @@ public sealed class MigrationService(AuthService auth, MigrationState state, Mov
     /// <summary>True while a deployment is being prepared (pre-flight again, the copy of the destination).</summary>
     public bool IsPreparing { get; private set; }
 
-    /// <summary>True while preparing, deploying or rolling back: the tenants mustn't change meanwhile.</summary>
-    public bool IsWorking => IsBusy || IsPreparing;
+    /// <summary>True while preparing, deploying or rolling back, policies or apps: the tenants mustn't change meanwhile.</summary>
+    public bool IsWorking => IsBusy || IsPreparing || AppsWorking;
+
+    /// <summary>Set by <see cref="ApplicationsService"/> while it prepares, deploys or rolls back apps.</summary>
+    public bool AppsWorking { get; internal set; }
 
     /// <summary>Set by <see cref="UpdateService"/> while an update downloads: Movewise restarts when it's done, so nothing may start.</summary>
     public bool IsUpdating { get; set; }
 
-    const string UpdatingMessage = "Movewise is downloading an update and will restart when it's done. Start the deployment after the restart.";
+    internal const string UpdatingMessage = "Movewise is downloading an update and will restart when it's done. Start the deployment after the restart.";
 
     /// <summary>What the running deployment is doing, for the screen.</summary>
     public string? BusyText { get; private set; }
@@ -667,6 +670,8 @@ public sealed class MigrationService(AuthService auth, MigrationState state, Mov
             throw new InvalidOperationException("A deployment is already running.");
         if (IsPreparing)
             throw new InvalidOperationException("A deployment is being prepared.");
+        if (AppsWorking)
+            throw new InvalidOperationException("Applications are being deployed. Wait for that to finish first.");
         if (IsUpdating)
             throw new InvalidOperationException(UpdatingMessage);
 
@@ -722,7 +727,7 @@ public sealed class MigrationService(AuthService auth, MigrationState state, Mov
     }
 
     /// <summary>Writes failures (and stops) to the support log, then lets them through to the screen.</summary>
-    static async Task Logged(string what, Func<Task> work)
+    internal static async Task Logged(string what, Func<Task> work)
     {
         try
         {

@@ -1,0 +1,245 @@
+@page "/apps/preflight"
+@using Movewise.Core.Preflight
+@inject MigrationState State
+@inject ApplicationsState Apps
+@inject ApplicationsService Applications
+@implements IDisposable
+
+<div class="page">
+    <header class="page-head">
+        <div class="head-row">
+            <div class="head-text">
+                <h1>Pre-flight checks</h1>
+                <p class="muted">A dry run against @DestinationName: what would be created or changed, and what you need to know first. Nothing grants consent or creates secrets for you.</p>
+            </div>
+            @if (Report is not null && !busy)
+            {
+                <div class="head-actions">
+                    <button class="btn ghost" @onclick="RunAsync">Run again</button>
+                </div>
+            }
+        </div>
+        <StepBar Current="3" Applications="true" />
+    </header>
+
+    <div class="content">
+        @if (!State.ReadyToDiscover || Apps.Selected.Count == 0)
+        {
+            <div class="alert warn">Choose the apps to migrate first. <a href="apps">Go to Choose apps</a></div>
+        }
+        else if (busy)
+        {
+            <div class="card pad" role="status">@progress</div>
+        }
+        else if (error is not null)
+        {
+            <div class="alert bad" role="alert">@error</div>
+        }
+        else if (Report is not null)
+        {
+            <div class="preflight">
+                <section class="stack gap">
+                    <div class="stats four">
+                        <div class="card stat"><b>@(Report.CreateCount + Report.UpdateCount)</b><span class="muted">to create or update</span></div>
+                        <div class="card stat"><b class="@(Report.SkipCount > 0 ? "warn-text" : "")">@Report.SkipCount</b><span class="muted">skipped or already there</span></div>
+                        <div class="card stat"><b class="@(Report.BlockedCount > 0 ? "bad-text" : "")">@Report.BlockedCount</b><span class="muted">blocked</span></div>
+                        <div class="card stat"><b>@Report.AssignmentCount</b><span class="muted">assignments</span></div>
+                    </div>
+
+                    @if (Report.HasBlockers && Report.CreateCount + Report.UpdateCount > 0)
+                    {
+                        <div class="card pad skip-blocked">
+                            <label>
+                                <input type="checkbox" checked="@Report.BlockedSkipped" @onchange="@(e => SetSkipBlockedAsync(e.Value is true))" />
+                                <span class="stack">
+                                    <b>Leave the @Report.BlockedCount blocked app@(Report.BlockedCount == 1 ? "" : "s") out and deploy the other @(Report.CreateCount + Report.UpdateCount)</b>
+                                    <span class="muted small">The blocked ones aren't migrated. Fix their blockers later and run Movewise again to add them.</span>
+                                </span>
+                            </label>
+                        </div>
+                    }
+
+                    <div class="card findings">
+                        @if (Report.Findings.Count == 0)
+                        {
+                            <div class="finding">
+                                <span class="icon ok" aria-hidden="true"><Check /></span>
+                                <div class="stack"><b>No issues found</b><span class="muted small">Every chosen app can be migrated as it is.</span></div>
+                            </div>
+                        }
+                        @foreach (var finding in Report.Findings)
+                        {
+                            var expanded = expandedFindings.Contains(finding.Title);
+                            <div class="finding @SeverityClass(finding.Severity)">
+                                <span class="icon @SeverityClass(finding.Severity)" aria-hidden="true">@SeverityIcon(finding.Severity)</span>
+                                <div class="stack">
+                                    <b>@finding.Title</b>
+                                    <span class="muted small">@finding.Detail</span>
+                                    @if (finding.Items.Count > 0)
+                                    {
+                                        <ul class="small">
+                                            @foreach (var item in expanded ? finding.Items : finding.Items.Take(4))
+                                            {
+                                                <li>@item</li>
+                                            }
+                                        </ul>
+                                        @if (finding.Items.Count > 4)
+                                        {
+                                            <button class="btn link small" @onclick="@(() => ToggleFinding(finding.Title))">
+                                                @(expanded ? "Show fewer" : $"Show all {finding.Items.Count}")
+                                            </button>
+                                        }
+                                    }
+                                    @if (finding.Choice == FindingChoice.ExistingApps)
+                                    {
+                                        <div class="choice" role="radiogroup" aria-label="What to do with apps already there">
+                                            <label><input type="radio" name="existing" checked="@(Apps.Choices.ExistingApps == ExistingAppChoice.Skip)" @onchange="@(() => SetExistingAsync(ExistingAppChoice.Skip))" /> Skip them</label>
+                                            <label><input type="radio" name="existing" checked="@(Apps.Choices.ExistingApps == ExistingAppChoice.Update)" @onchange="@(() => SetExistingAsync(ExistingAppChoice.Update))" /> Update their settings and assignments in place</label>
+                                        </div>
+                                    }
+                                </div>
+                            </div>
+                        }
+                    </div>
+                </section>
+
+                <section class="card table app-results">
+                    <div class="row head"><span>Application</span><span>Outcome</span></div>
+                    @foreach (var app in Report.Apps)
+                    {
+                        <div class="row">
+                            <span class="stack">
+                                <span class="strong">@app.Source.DisplayName</span>
+                                @foreach (var reason in app.Reasons)
+                                {
+                                    <span class="muted small">@reason</span>
+                                }
+                                @if (app.Outcome == Outcome.Create)
+                                {
+                                    <span class="muted small">@Plan(app)</span>
+                                }
+                            </span>
+                            <span><span class="pill @OutcomeClass(app)">@OutcomeText(app)</span></span>
+                        </div>
+                    }
+                </section>
+            </div>
+        }
+    </div>
+
+    <footer class="page-foot">
+        <span class="@(Report?.HasBlockers == true && !Report.BlockedSkipped ? "bad-text" : "muted")">
+            @(Report is null ? "" : Report.HasBlockers && !Report.BlockedSkipped ? "Fix the blockers, or leave the blocked apps out, before deploying." : Report.CanDeploy ? "Ready to deploy." : "There's nothing to do: every chosen app is skipped.")
+        </span>
+        <div class="head-actions">
+            <a class="btn ghost" href="apps/map">Back</a>
+            <a class="btn primary @(Report?.CanDeploy == true && !busy ? "" : "disabled")" href="apps/deploy" aria-disabled="@(Report?.CanDeploy == true && !busy ? "false" : "true")">
+                Deploy
+                <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M5 12h14M13 6l6 6-6 6"></path></svg>
+            </a>
+        </div>
+    </footer>
+</div>
+
+@code {
+    bool busy;
+    string progress = "";
+    string? error;
+    readonly HashSet<string> expandedFindings = [];
+
+    AppPreflightReport? Report => Apps.Preflight;
+    string DestinationName => State.Destination?.Info.DisplayName ?? "the destination";
+
+    protected override async Task OnInitializedAsync()
+    {
+        Apps.Changed += OnStateChanged;
+        if (State.ReadyToDiscover && Apps.Selected.Count > 0 && !Applications.IsWorking)
+            await RunAsync();
+    }
+
+    async Task RunAsync()
+    {
+        busy = true;
+        error = null;
+        progress = "Checking the destination…";
+        try
+        {
+            await Applications.RunPreflightAsync(new Progress<string>(text =>
+            {
+                progress = text;
+                InvokeAsync(StateHasChanged);
+            }));
+        }
+        catch (Exception ex)
+        {
+            error = $"The dry run didn't finish. {ex.Message}";
+        }
+        finally
+        {
+            busy = false;
+        }
+    }
+
+    Task SetExistingAsync(ExistingAppChoice choice)
+    {
+        Apps.Choices = Apps.Choices with { ExistingApps = choice };
+        return RunAsync();
+    }
+
+    Task SetSkipBlockedAsync(bool skip)
+    {
+        Apps.Choices = Apps.Choices with { SkipBlocked = skip };
+        return RunAsync();
+    }
+
+    void ToggleFinding(string title)
+    {
+        if (!expandedFindings.Remove(title))
+            expandedFindings.Add(title);
+    }
+
+    static string Plan(AppResult app)
+    {
+        var parts = new List<string>();
+        if (app.IsUpdate && app.ChangedSettings.Count > 0)
+            parts.Add($"Changes {string.Join(", ", app.ChangedSettings)}");
+        parts.Add(app.Assignments.Count == 0 ? "no assignments to add" : $"{app.Assignments.Count} assignment{(app.Assignments.Count == 1 ? "" : "s")} to add");
+        if (app.Owners.Count > 0)
+            parts.Add($"{app.Owners.Count} owner{(app.Owners.Count == 1 ? "" : "s")}");
+        return string.Join(" · ", parts);
+    }
+
+    static string OutcomeText(AppResult app) => app.Outcome switch
+    {
+        Outcome.Create when app.IsUpdate => "Update",
+        Outcome.Create => "Create",
+        Outcome.Blocked => "Blocked",
+        _ => "Skip",
+    };
+
+    static string OutcomeClass(AppResult app) => app.Outcome switch
+    {
+        Outcome.Create when app.IsUpdate => "info",
+        Outcome.Create => "ok",
+        Outcome.Blocked => "bad",
+        _ => "neutral",
+    };
+
+    static string SeverityClass(Severity severity) => severity switch
+    {
+        Severity.Blocker => "bad",
+        Severity.Warning => "warn",
+        _ => "info",
+    };
+
+    static string SeverityIcon(Severity severity) => severity switch
+    {
+        Severity.Blocker => "×",
+        Severity.Warning => "!",
+        _ => "i",
+    };
+
+    void OnStateChanged() => InvokeAsync(StateHasChanged);
+
+    public void Dispose() => Apps.Changed -= OnStateChanged;
+}

@@ -8,7 +8,8 @@ namespace Movewise.App.Demo;
 /// <summary>
 /// An in-memory Microsoft Graph for the demo tenants. It understands the requests Movewise makes: collections,
 /// items by ID (including Intune's <c>('id')</c> form), assignments, simple <c>$filter</c>s (eq, startswith, and, or),
-/// <c>$top</c>, and SharePoint sites by address. Writes change the in-memory tenant, so deploy and rollback can be tried.
+/// <c>$top</c>, SharePoint sites by address, and an app's assignments and owners. Writes change the in-memory tenant,
+/// so deploy and rollback can be tried.
 /// </summary>
 sealed class DemoGraph : IGraphWriter
 {
@@ -125,9 +126,15 @@ sealed class DemoGraph : IGraphWriter
                 var created = (JsonObject)body.DeepClone();
                 created["id"] = Guid.NewGuid().ToString();
                 created["createdDateTime"] = DateTimeOffset.UtcNow.ToString("o");
-                // What the service sets itself: a new authentication strength is always a custom one.
+                // What the service sets itself: a new authentication strength is always a custom one, and an app's
+                // service principal takes its name from the app.
                 if (basePath.EndsWith("authenticationStrengthPolicies", StringComparison.OrdinalIgnoreCase))
                     created["policyType"] = "custom";
+                if (basePath.Equals("v1.0/servicePrincipals", StringComparison.OrdinalIgnoreCase) && created["displayName"] is null)
+                {
+                    created["displayName"] = _appNames.GetValueOrDefault(Text(created, "appId"), Text(created, "appId"));
+                    created["servicePrincipalType"] = "Application";
+                }
                 list.Add(created);
                 return Visible(created);
             }
@@ -141,6 +148,16 @@ sealed class DemoGraph : IGraphWriter
                     return null;
                 case "targetapps":
                     item["apps"] = body["apps"]?.DeepClone();
+                    return null;
+                case "approleassignedto":
+                    // A user or group given access to an app.
+                    var assignment = (JsonObject)body.DeepClone();
+                    assignment["id"] = Guid.NewGuid().ToString();
+                    assignment["principalType"] = _collections.TryGetValue("v1.0/groups", out var groups) && groups.Any(g => Text(g, "id") == Text(assignment, "principalId")) ? "Group" : "User";
+                    HiddenList(item, "appRoleAssignedTo").Add(assignment);
+                    return (JsonObject)assignment.DeepClone();
+                case "owners/$ref":
+                    HiddenList(item, "owners").Add(new JsonObject { ["@odata.type"] = "#microsoft.graph.user", ["id"] = LastSegment(body["@odata.id"]) });
                     return null;
                 case "assignments" or "localizednotificationmessages":
                     // Autopilot and terms: one assignment at a time. Notification templates: one message at a time.
@@ -216,6 +233,14 @@ sealed class DemoGraph : IGraphWriter
                 if (removed > 0)
                     return;
             }
+
+            // An app's assignment (appRoleAssignedTo/{id}) or owner (owners/{id}/$ref).
+            if (Find(basePath) is ({ } item, { } sub) && sub.Split('/') is [var name, var id, ..]
+                && item[Hidden + name] is JsonArray entries && entries.OfType<JsonObject>().FirstOrDefault(e => Text(e, "id") == Uri.UnescapeDataString(id)) is { } entry)
+            {
+                entries.Remove(entry);
+                return;
+            }
             throw NotFound(path);
         }
     }
@@ -258,6 +283,26 @@ sealed class DemoGraph : IGraphWriter
         || basePath.Equals($"{collection}('{id}')", StringComparison.OrdinalIgnoreCase);
 
     IEnumerable<JsonObject> Items(string collection) => _collections.TryGetValue(collection, out var list) ? list : [];
+
+    readonly Dictionary<string, string> _appNames = new(StringComparer.OrdinalIgnoreCase);
+
+    /// <summary>Names of other organizations' apps, by app ID: what a service principal created for one is called.</summary>
+    public DemoGraph KnowsApps(IEnumerable<(string AppId, string Name)> apps)
+    {
+        foreach (var (appId, name) in apps)
+            _appNames[appId] = name;
+        return this;
+    }
+
+    static JsonArray HiddenList(JsonObject item, string name)
+    {
+        if (item[Hidden + name] is not JsonArray list)
+            item[Hidden + name] = list = [];
+        return list;
+    }
+
+    // The last segment of a reference such as "https://graph.microsoft.com/v1.0/directoryObjects/{id}".
+    static string LastSegment(JsonNode? reference) => reference?.ToString().TrimEnd('/').Split('/')[^1] ?? "";
 
     static JsonObject Page(IEnumerable<JsonObject> items, Dictionary<string, string> query)
     {

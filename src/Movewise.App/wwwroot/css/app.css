@@ -295,6 +295,9 @@ input[type=checkbox] { width: 16px; height: 16px; margin: 0; accent-color: var(-
 .skip-blocked label { display: flex; gap: 10px; align-items: flex-start; cursor: pointer; }
 .skip-blocked input { margin-top: 3px; }
 
+/* Applications */
+.app-results .row { grid-template-columns: minmax(0, 1fr) 110px; padding: 10px 0; }
+
 /* Compare */
 .compare-modes { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 12px; }
 .compare-modes label { display: flex; gap: 10px; align-items: flex-start; padding: 12px; border: 1px solid var(--line, #E3E4E8); border-radius: 10px; cursor: pointer; }

@@ -43,6 +43,10 @@ public static class Scopes
         // Custom Entra admin roles.
         "RoleManagement.ReadWrite.Directory",
         "Application.Read.All",
+        // Enterprise apps migrated in Applications, and the users and groups assigned to them. Never used to grant
+        // an app's API permissions: Movewise leaves consent to an admin.
+        "Application.ReadWrite.All",
+        "AppRoleAssignment.ReadWrite.All",
         "Group.ReadWrite.All",
         "DeviceManagementConfiguration.ReadWrite.All",
         "DeviceManagementApps.ReadWrite.All",

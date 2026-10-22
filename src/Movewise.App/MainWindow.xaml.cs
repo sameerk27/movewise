@@ -27,6 +27,8 @@ public partial class MainWindow : Window
         services.AddSingleton(new AuthService(options, () => new WindowInteropHelper(this).Handle));
         services.AddSingleton<MigrationState>();
         services.AddSingleton<MigrationService>();
+        services.AddSingleton<ApplicationsState>();
+        services.AddSingleton<ApplicationsService>();
         services.AddSingleton<UpdateService>();
         services.AddSingleton<AppRegistrationCreator>();
         var provider = services.BuildServiceProvider();

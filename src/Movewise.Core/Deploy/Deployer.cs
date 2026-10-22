@@ -30,6 +30,8 @@ public static class Deployer
     {
         if (run.RolledBack is not null)
             throw new InvalidOperationException("This run was rolled back. Start a new deployment instead.");
+        if (run.Kind != RunKind.Policies)
+            throw new InvalidOperationException("This run migrates applications. Open it in Applications.");
 
         // Updating a PowerShell policy reads its whole type (cmdlets list them all, with their rules). Read once per
         // run and shared: each step reads its own policy before changing it, so none sees another's change.
@@ -757,6 +759,8 @@ public static class Deployer
     /// <param name="ct">Stops between objects, like <see cref="RunAsync(TenantClients, DeployRun, Func{Task}, Action{DeployStep}?, CancellationToken)"/>.</param>
     public static async Task RollbackAsync(TenantClients tenant, DeployRun run, Func<Task> save, Action<DeployStep>? changed = null, CancellationToken ct = default)
     {
+        if (run.Kind != RunKind.Policies)
+            throw new InvalidOperationException("This run migrated applications. Roll it back in Applications.");
         foreach (var step in Enumerable.Reverse(run.Steps).ToList())
         {
             ct.ThrowIfCancellationRequested();
@@ -1035,7 +1039,7 @@ public static class Deployer
     /// True when the request may have reached Microsoft 365 even though it failed: a timeout, a dropped
     /// connection, or a server error. A clear rejection (400, 403, 409, or a cmdlet error) means nothing was created.
     /// </summary>
-    static bool IsUncertain(Exception ex, CancellationToken ct) => ex switch
+    internal static bool IsUncertain(Exception ex, CancellationToken ct) => ex switch
     {
         HttpRequestException => true,
         TaskCanceledException when !ct.IsCancellationRequested => true,
@@ -1044,7 +1048,7 @@ public static class Deployer
         _ => false,
     };
 
-    static bool IsNotFound(Exception ex) => ex switch
+    internal static bool IsNotFound(Exception ex) => ex switch
     {
         GraphException graph => graph.Status == HttpStatusCode.NotFound,
         PowerShellException shell => shell.IsNotFound,

@@ -45,7 +45,7 @@ public sealed record PreflightChoices
 }
 
 /// <summary>Which choice a finding lets the admin make on the Pre-flight screen.</summary>
-public enum FindingChoice { None, NameConflicts, RiskPoliciesWithoutP2 }
+public enum FindingChoice { None, NameConflicts, RiskPoliciesWithoutP2, ExistingApps }
 
 public sealed record Finding(Severity Severity, string Title, string Detail, IReadOnlyList<string> Items)
 {

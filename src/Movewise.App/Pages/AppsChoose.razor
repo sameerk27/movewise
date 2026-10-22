@@ -1,0 +1,196 @@
+@page "/apps"
+@using Movewise.Core.Preflight
+@inject MigrationState State
+@inject ApplicationsState Apps
+@inject ApplicationsService Applications
+@inject NavigationManager Nav
+@implements IDisposable
+
+<div class="page">
+    <header class="page-head">
+        <div class="head-row">
+            <div class="head-text">
+                <h1>Choose applications to migrate</h1>
+                <p class="muted">Enterprise apps Movewise found in @SourceName: other organizations' apps, such as SaaS apps, with the same app ID in every tenant. Microsoft's own apps are left out: every tenant has them.</p>
+            </div>
+            @if (State.ReadyToDiscover)
+            {
+                <div class="head-actions">
+                    <button class="btn ghost" disabled="@busy" @onclick="ReadAsync">Read again</button>
+                </div>
+            }
+        </div>
+        <StepBar Current="1" Applications="true" />
+    </header>
+
+    <div class="content">
+        @if (!State.ReadyToDiscover)
+        {
+            <div class="alert warn">Connect both tenants first. <a href="">Go to Connect</a></div>
+        }
+        else if (State.Source!.IsBaseline)
+        {
+            <div class="alert warn">The source is a saved baseline, which has no apps. Sign in to the source tenant to migrate its apps. <a href="">Go to Connect</a></div>
+        }
+        else if (busy)
+        {
+            <div class="card pad" role="status">@progress</div>
+        }
+        else if (error is not null)
+        {
+            <div class="alert bad" role="alert">@error</div>
+        }
+        else
+        {
+            if (Apps.Warnings.Count > 0)
+            {
+                <div class="alert warn" role="alert">
+                    <b>Some apps couldn't be read, so they're missing from this list.</b>
+                    <ul>
+                        @foreach (var warning in Apps.Warnings)
+                        {
+                            <li>@warning.Message</li>
+                        }
+                    </ul>
+                </div>
+            }
+
+            <div class="stats">
+                <div class="card stat"><b>@Apps.Apps.Count</b><span class="muted">apps found</span></div>
+                <div class="card stat"><b>@Apps.Selected.Count</b><span class="muted">selected</span></div>
+                <div class="card stat"><b class="warn-text">@Apps.Apps.Count(NeedsConsent)</b><span class="muted">with API permissions to consent to</span></div>
+            </div>
+
+            <section class="card table">
+                <div class="row head">
+                    <span><input type="checkbox" aria-label="Select all" checked="@AllSelected" @onchange="ToggleAll" /></span>
+                    <span>Application</span><span>Kind</span><span>Sign-on</span><span>Assigned to</span><span>Status</span>
+                </div>
+                @if (Apps.Apps.Count == 0)
+                {
+                    <div class="empty muted">No enterprise apps from other organizations were found in @SourceName.</div>
+                }
+                @foreach (var app in Apps.Apps)
+                {
+                    var key = MigrationState.Key(app);
+                    var (pill, text) = Status(app);
+                    <div class="row">
+                        <span><input type="checkbox" aria-label="Select @app.DisplayName" checked="@Apps.Selected.Contains(key)" @onchange="@(e => Toggle(key, e))" /></span>
+                        <span class="stack">
+                            <span class="strong">@app.DisplayName</span>
+                            <span class="muted small">@Publisher(app)</span>
+                        </span>
+                        <span class="muted">@app.Type.DisplayName</span>
+                        <span class="muted">@SignOn(app)</span>
+                        <span class="muted">@AssignedTo(app)</span>
+                        <span><span class="pill @pill">@text</span></span>
+                    </div>
+                }
+            </section>
+        }
+    </div>
+
+    <footer class="page-foot">
+        <span class="muted">@Apps.Selected.Count of @Apps.Apps.Count selected</span>
+        <div class="head-actions">
+            <a class="btn ghost" href="">Back</a>
+            <button class="btn primary" disabled="@(busy || Apps.Selected.Count == 0)" @onclick="@(() => Nav.NavigateTo("apps/map"))">
+                Map users &amp; groups
+                <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M5 12h14M13 6l6 6-6 6"></path></svg>
+            </button>
+        </div>
+    </footer>
+</div>
+
+@code {
+    bool busy;
+    string progress = "";
+    string? error;
+
+    string SourceName => State.Source?.Info.DisplayName ?? "the source tenant";
+    bool AllSelected => Apps.Apps.Count > 0 && Apps.Apps.All(a => Apps.Selected.Contains(MigrationState.Key(a)));
+
+    protected override async Task OnInitializedAsync()
+    {
+        Apps.Changed += OnStateChanged;
+        if (State.ReadyToDiscover && !State.Source!.IsBaseline && !Apps.IsRead)
+            await ReadAsync();
+    }
+
+    async Task ReadAsync()
+    {
+        busy = true;
+        error = null;
+        progress = "Reading enterprise apps…";
+        try
+        {
+            await Applications.ReadAsync(new Progress<string>(text =>
+            {
+                progress = text;
+                InvokeAsync(StateHasChanged);
+            }));
+        }
+        catch (Exception ex)
+        {
+            error = $"Couldn't read the apps. {ex.Message}";
+        }
+        finally
+        {
+            busy = false;
+        }
+    }
+
+    void Toggle(string key, ChangeEventArgs e)
+    {
+        if (e.Value is true)
+            Apps.Selected.Add(key);
+        else
+            Apps.Selected.Remove(key);
+        Apps.NotifyChanged();
+    }
+
+    void ToggleAll(ChangeEventArgs e)
+    {
+        if (e.Value is true)
+            Apps.Selected.UnionWith(Apps.Apps.Select(MigrationState.Key));
+        else
+            Apps.Selected.Clear();
+        Apps.NotifyChanged();
+    }
+
+    static bool NeedsConsent(ExportedResource app) => AppPreflight.Strings(app.Settings["apiPermissions"]).Count > 0;
+
+    static (string Pill, string Text) Status(ExportedResource app) =>
+        NeedsConsent(app) ? ("warn", "Needs consent")
+        : AppPreflight.Strings(app.Settings["notMigrated"]).Count > 0 ? ("neutral", "Partial")
+        : ("ok", "Ready");
+
+    static string Publisher(ExportedResource app) =>
+        Text(app, "publisherName") is { Length: > 0 } publisher ? $"{publisher} · app ID {Text(app, "appId")}" : $"App ID {Text(app, "appId")}";
+
+    static string SignOn(ExportedResource app) => Text(app, "preferredSingleSignOnMode") switch
+    {
+        "saml" => "SAML",
+        "password" => "Password",
+        "oidc" => "OpenID Connect",
+        "notSupported" or "" => "—",
+        var mode => mode,
+    };
+
+    static string AssignedTo(ExportedResource app)
+    {
+        var users = (app.Settings["assignedUsers"] as System.Text.Json.Nodes.JsonArray)?.Count ?? 0;
+        var groups = (app.Settings["assignedGroups"] as System.Text.Json.Nodes.JsonArray)?.Count ?? 0;
+        var parts = new List<string>();
+        if (groups > 0) parts.Add($"{groups} group{(groups == 1 ? "" : "s")}");
+        if (users > 0) parts.Add($"{users} user{(users == 1 ? "" : "s")}");
+        return parts.Count == 0 ? "No one" : string.Join(", ", parts);
+    }
+
+    static string Text(ExportedResource app, string name) =>
+        app.Settings[name] is System.Text.Json.Nodes.JsonValue value && value.TryGetValue<string>(out var text) ? text : "";
+
+    void OnStateChanged() => InvokeAsync(StateHasChanged);
+
+    public void Dispose() => Apps.Changed -= OnStateChanged;
+}

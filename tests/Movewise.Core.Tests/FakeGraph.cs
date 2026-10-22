@@ -94,9 +94,20 @@ sealed class FakeGraph : IGraphWriter
         return this;
     }
 
+    Func<string, JsonObject?>? _answer;
+
+    /// <summary>Answers object reads with no canned JSON, such as a filtered lookup; null means nothing is there.</summary>
+    public FakeGraph Answer(Func<string, JsonObject?> answer)
+    {
+        _answer = answer;
+        return this;
+    }
+
     public Task<JsonObject> GetObjectAsync(string path, CancellationToken ct = default)
     {
         Record(path);
+        if (!_objects.ContainsKey(path) && _answer?.Invoke(path) is { } answered)
+            return Task.FromResult(answered);
         return Task.FromResult((JsonObject)_objects[path].DeepClone());
     }
 
