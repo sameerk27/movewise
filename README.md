@@ -10,7 +10,7 @@
 ![Status](https://img.shields.io/badge/status-pre--release%200.2.0-orange)
 [![License: MIT](https://img.shields.io/badge/license-MIT-green)](LICENSE)
 
-[Website](https://sameerk27.github.io/movewise/) · [Download](#download) · [How it works](#how-it-works) · [What it migrates](#what-it-migrates) · [FAQ](#faq) · [Build from source](#build-from-source) · [Docs](#documentation)
+[Website](https://sameerk27.github.io/movewise/) · [Screenshots](#screenshots) · [Download](#download) · [How it works](#how-it-works) · [What it migrates](#what-it-migrates) · [FAQ](#faq) · [Build from source](#build-from-source) · [Docs](#documentation)
 
 </div>
 
@@ -19,6 +19,33 @@
 Movewise is a free Windows app for **Microsoft 365 tenant-to-tenant migrations**, for mergers, acquisitions, divestitures and MSPs consolidating tenants. It migrates **policies and settings**, not mailboxes or files: Entra ID Conditional Access, Intune, Defender for Office 365, Defender for Endpoint, Exchange Online, Purview, Teams and SharePoint.
 
 An admin signs in to the **source** tenant (read only) and the **destination** tenant, picks the policies to move, maps every group, user, app and named location they depend on, checks the result in a dry run, and deploys. Every run can be resumed, and rolled back to take out only what it created. After the migration, Movewise compares tenants, takes snapshots, monitors configuration drift, and saves policy baselines to apply to other tenants.
+
+## Screenshots
+
+All screenshots use the built-in demo tenants (Contoso and Fabrikam), so no real tenant data is shown.
+
+<table>
+<tr>
+<td width="50%" valign="top">
+<a href="site/img/map.png"><img src="site/img/map.png" alt="Map dependencies screen: each group, user and app the policies use, matched in the destination automatically or by hand"></a>
+<p align="center"><b>Map</b> · match every group, user and app the policies point at</p>
+</td>
+<td width="50%" valign="top">
+<a href="site/img/preflight.png"><img src="site/img/preflight.png" alt="Pre-flight checks screen: counts of policies to create, skip and block, with a before and after view of a Conditional Access policy"></a>
+<p align="center"><b>Pre-flight</b> · a dry run with a before and after view of every policy</p>
+</td>
+</tr>
+<tr>
+<td width="50%" valign="top">
+<a href="site/img/rollback.png"><img src="site/img/rollback.png" alt="Deploy screen after a rollback: every object the run created deleted, and changed settings put back"></a>
+<p align="center"><b>Roll back</b> · removes only what the run created</p>
+</td>
+<td width="50%" valign="top">
+<a href="site/img/compare.png"><img src="site/img/compare.png" alt="Compare screen: a tenant compared with an earlier snapshot, showing what was removed, added or changed"></a>
+<p align="center"><b>Compare</b> · tenant against tenant, or against a snapshot to spot drift</p>
+</td>
+</tr>
+</table>
 
 ## How it works
 
