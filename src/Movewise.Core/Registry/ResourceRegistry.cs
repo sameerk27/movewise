@@ -54,6 +54,11 @@ public static class ResourceRegistry
     public const string User = "user";
     public const string Application = "application";
 
+    // Applications, migrated in their own section rather than with the policies.
+    public const string EnterpriseApp = "enterpriseApp";
+    public const string AppRegistration = "appRegistration";
+    public const string GalleryApp = "galleryApp";
+
     // Defender for Office 365
     public const string AntiPhishPolicy = "antiPhishPolicy";
     public const string AntiSpamPolicy = "antiSpamPolicy";
@@ -188,6 +193,12 @@ public static class ResourceRegistry
 
     const string DeviceManagement = "beta/deviceManagement";
     const string DeviceAppManagement = "beta/deviceAppManagement";
+
+    /// <summary>
+    /// Organizations that own Microsoft's own apps. Every tenant has those, so they're never migrated: the first is
+    /// the one Microsoft documents for its first-party apps, the second Microsoft's own tenant, which owns many more.
+    /// </summary>
+    public static readonly IReadOnlySet<string> MicrosoftOwners = Set("f8cdef31-a31e-4b4a-93e4-5f571e91255a", "72f988bf-86f1-41af-91ab-2d7cd011db47");
 
     public static IReadOnlyList<ResourceType> All { get; } =
     [
@@ -1060,7 +1071,77 @@ public static class ResourceRegistry
         TeamsSettings(TeamsGuestMeetingSettings, "Teams guest meeting settings", "TeamsGuestMeetingConfiguration"),
         TeamsSettings(TeamsGuestMessagingSettings, "Teams guest messaging settings", "TeamsGuestMessagingConfiguration"),
         TeamsSettings(TeamsGuestCallingSettings, "Teams guest calling settings", "TeamsGuestCallingConfiguration"),
+
+        // ---------- Applications (their own section, never listed with the policies) ----------
+        // Another organization's app, such as a multi-tenant SaaS app: its service principal is created for the same
+        // app ID, with its settings, owners and the users and groups assigned to it. Assignments and owners are read
+        // into "assignedUsers", "assignedGroups" and "owners" (see Exporter.ExportAppsAsync).
+        new ResourceType(
+            EnterpriseApp,
+            M365Service.Entra,
+            "Enterprise app",
+            "v1.0/servicePrincipals?$select=id,appId,displayName,appOwnerOrganizationId,servicePrincipalType,accountEnabled,appRoleAssignmentRequired,"
+                + "tags,notes,homepage,loginUrl,logoutUrl,description,notificationEmailAddresses,preferredSingleSignOnMode,samlSingleSignOnSettings,publisherName,"
+                + "applicationTemplateId,passwordCredentials,keyCredentials",
+            "displayName",
+            ["id", "servicePrincipalType", "passwordCredentials", "keyCredentials", "createdDateTime", "deletedDateTime"],
+            [
+                new("assignedUsers[].principalId", User) { OnRemove = RemoveBehavior.RemoveContainingItem },
+                new("assignedGroups[].principalId", Group) { OnRemove = RemoveBehavior.RemoveContainingItem },
+                new("owners[]", User),
+            ],
+            [])
+        {
+            AppsOnly = true,
+            Include = item => Text(item, "servicePrincipalType") == "Application" && !MicrosoftOwners.Contains(Text(item, "appOwnerOrganizationId")),
+            AdminRoles = [DirectoryRoles.ApplicationAdministrator, DirectoryRoles.CloudApplicationAdministrator],
+        },
+
+        // The source's own app registration: recreated with a new app ID, with its service principal's settings,
+        // owners and assignments read as for an enterprise app (its service principal under "servicePrincipal").
+        new ResourceType(
+            AppRegistration,
+            M365Service.Entra,
+            "App registration",
+            "v1.0/applications?$select=id,appId,displayName,description,signInAudience,identifierUris,web,spa,publicClient,isFallbackPublicClient,"
+                + "appRoles,optionalClaims,api,requiredResourceAccess,groupMembershipClaims,info,notes,tags,passwordCredentials,keyCredentials",
+            "displayName",
+            ["id", "appId", "passwordCredentials", "keyCredentials", "createdDateTime", "deletedDateTime", "publisherDomain"],
+            [
+                new("assignedUsers[].principalId", User) { OnRemove = RemoveBehavior.RemoveContainingItem },
+                new("assignedGroups[].principalId", Group) { OnRemove = RemoveBehavior.RemoveContainingItem },
+                new("owners[]", User),
+            ],
+            [])
+        {
+            AppsOnly = true,
+            AdminRoles = [DirectoryRoles.ApplicationAdministrator, DirectoryRoles.CloudApplicationAdministrator],
+        },
+
+        // An app the source added from the Entra gallery (or as a non-gallery SAML app): a registration made from a
+        // template, read like one, with its template under "template". Created again from the same template, so it
+        // gets a new app ID, then set up like the source's: SAML single sign-on, claims and a new signing certificate.
+        new ResourceType(
+            GalleryApp,
+            M365Service.Entra,
+            "Gallery app",
+            "v1.0/applications",
+            "displayName",
+            ["id", "appId", "passwordCredentials", "keyCredentials", "createdDateTime", "deletedDateTime", "publisherDomain"],
+            [
+                new("assignedUsers[].principalId", User) { OnRemove = RemoveBehavior.RemoveContainingItem },
+                new("assignedGroups[].principalId", Group) { OnRemove = RemoveBehavior.RemoveContainingItem },
+                new("owners[]", User),
+            ],
+            [])
+        {
+            AppsOnly = true,
+            AdminRoles = [DirectoryRoles.ApplicationAdministrator, DirectoryRoles.CloudApplicationAdministrator],
+        },
     ];
+
+    static string Text(JsonObject item, string name) =>
+        item[name] is JsonValue value && value.TryGetValue<string>(out var text) ? text : "";
 
     /// <summary>
     /// A Teams policy. It does nothing until it's assigned, so its group assignments come with it. Assignments
@@ -1263,8 +1344,11 @@ public static class ResourceRegistry
     public static ResourceType Get(string id) =>
         All.FirstOrDefault(t => t.Id == id) ?? throw new KeyNotFoundException($"Unknown resource type '{id}'.");
 
-    /// <summary>The types to read from a service. Reference-only types (Intune apps) are only matched, never read for migrating.</summary>
-    public static IEnumerable<ResourceType> For(M365Service service) => All.Where(t => t.Service == service && !t.ReferenceOnly);
+    /// <summary>
+    /// The policy types to read from a service. Reference-only types (Intune apps) are only matched, never read for
+    /// migrating, and apps belong to the Applications section.
+    /// </summary>
+    public static IEnumerable<ResourceType> For(M365Service service) => All.Where(t => t.Service == service && !t.ReferenceOnly && !t.AppsOnly);
 
     /// <summary>Every Intune policy can be assigned to groups, narrowed by a filter, and tagged with scope tags.</summary>
     static ReferenceRule[] IntuneReferences() =>

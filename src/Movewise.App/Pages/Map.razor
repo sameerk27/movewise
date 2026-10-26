@@ -2,6 +2,8 @@
 @using System.IO
 @inject MigrationState State
 @inject MigrationService Migration
+@inject ApplicationsState Apps
+@inject NavigationManager Nav
 @implements IDisposable
 
 <div class="page">
@@ -140,6 +142,14 @@
                                 <span class="small strong">In @DestinationName</span>
                                 <span><span class="pill @PillClass(selected.Kind)">@MappingNames.Describe(selected.Kind)</span> @DestinationText(selected)</span>
                             </div>
+
+                            @if (selected.TargetType == ResourceRegistry.Application && !selected.IsResolved)
+                            {
+                                <div class="stack">
+                                    <button class="btn primary" @onclick="MigrateApp">Migrate it in Applications →</button>
+                                    <span class="small muted">Opens Applications with this app ticked. Come back and choose Match again once it's deployed.</span>
+                                </div>
+                            }
 
                             <div class="stack">
                                 <label class="small strong" for="map-search">Match to an existing @MappingNames.Singular(selected.TargetType).ToLowerInvariant()</label>
@@ -351,6 +361,14 @@
 
     Task RemoveAsync() => ChangeDecisionAsync(m => m.RemoveFromPolicies());
 
+    void MigrateApp()
+    {
+        if (selected is null)
+            return;
+        Apps.Request(selected.Source.Id);
+        Nav.NavigateTo("apps");
+    }
+
     Task ClearAsync() => ChangeDecisionAsync(m => m.Clear());
 
     async Task ChangeDecisionAsync(Action<Mapping> decide)
@@ -419,8 +437,10 @@
 
     static string DestinationText(Mapping mapping) => mapping.Kind switch
     {
+        MatchKind.Unresolved when mapping.TargetType == ResourceRegistry.Application => "Not in the destination yet",
         MatchKind.Unresolved => "Choose a match…",
         MatchKind.RemoveFromPolicies => "Removed from the policies",
+        MatchKind.MigratedApp => $"{mapping.Destination?.DisplayName} · new app ID {mapping.Destination?.Id}",
         MatchKind.CreatedByMigration => $"New: {mapping.Source.DisplayName} (migrated with the policies)",
         MatchKind.CreateInDestination => $"New: {mapping.Source.DisplayName}",
         MatchKind.External => "Kept as it is (outside the source tenant)",

@@ -24,7 +24,8 @@ public static class Matcher
         IGraphReader Destination,
         IReadOnlyCollection<ExportedResource> Exported,
         HashSet<(string Type, string Id)> Selected,
-        TenantClients DestinationClients)
+        TenantClients DestinationClients,
+        IReadOnlyDictionary<string, string> MigratedAppIds)
     {
         public ConcurrentDictionary<string, Lazy<Task<IReadOnlyList<JsonObject>>>> DestinationLists { get; } = new();
 
@@ -41,6 +42,10 @@ public static class Matcher
     /// <param name="selected">Policies chosen for migration.</param>
     /// <param name="exported">Everything read from the source, selected or not.</param>
     /// <param name="previous">An earlier plan whose manual decisions are kept.</param>
+    /// <param name="migratedAppIds">
+    /// Source app ID → destination app ID for the app registrations Movewise migrated (the app ID map). An app missing
+    /// from the destination under its own app ID is matched to its migrated copy.
+    /// </param>
     public static Task<MappingPlan> BuildAsync(
         IGraphReader source,
         IGraphReader destination,
@@ -48,8 +53,9 @@ public static class Matcher
         IReadOnlyCollection<ExportedResource> exported,
         MappingPlan? previous = null,
         IProgress<string>? progress = null,
-        CancellationToken ct = default) =>
-        BuildAsync(source, new TenantClients(destination), selected, exported, previous, progress, ct);
+        CancellationToken ct = default,
+        IReadOnlyDictionary<string, string>? migratedAppIds = null) =>
+        BuildAsync(source, new TenantClients(destination), selected, exported, previous, progress, ct, migratedAppIds);
 
     /// <param name="destination">The destination, with PowerShell for objects that live there (sensitivity labels).</param>
     public static async Task<MappingPlan> BuildAsync(
@@ -59,12 +65,14 @@ public static class Matcher
         IReadOnlyCollection<ExportedResource> exported,
         MappingPlan? previous = null,
         IProgress<string>? progress = null,
-        CancellationToken ct = default)
+        CancellationToken ct = default,
+        IReadOnlyDictionary<string, string>? migratedAppIds = null)
     {
         var references = selected
             .SelectMany(policy => policy.Dependencies.Select(d => (d.TargetType, d.Value, Policy: policy.DisplayName)))
             .ToList();
-        var context = new Context(source, destination.Graph, exported, selected.Select(e => (e.Type.Id, e.SourceId)).ToHashSet(), destination);
+        var context = new Context(source, destination.Graph, exported, selected.Select(e => (e.Type.Id, e.SourceId)).ToHashSet(), destination,
+            migratedAppIds ?? new Dictionary<string, string>());
 
         // An address's domain is mapped once, and every address in it follows. So the source's own domains
         // behind recipient addresses are matched too, even when no policy names the domain itself.
@@ -347,7 +355,11 @@ public static class Matcher
         static ObjectRef User(JsonObject u) => new(Text(u, "id"), Text(u, "displayName"), Text(u, "userPrincipalName"));
     }
 
-    /// <summary>Policies reference apps by app ID, which is the same in every tenant that has the app.</summary>
+    /// <summary>
+    /// Policies reference apps by app ID, which is the same in every tenant that has the app. The source's own app
+    /// registrations get a new app ID when Movewise migrates them, so the app ID map is checked before an app is
+    /// reported as missing.
+    /// </summary>
     static async Task<Mapping> MatchAppAsync(string appId, IReadOnlyList<string> usedBy, Context context, CancellationToken ct)
     {
         var filter = $"appId eq {GraphQuery.Literal(appId)}";
@@ -355,12 +367,19 @@ public static class Matcher
         var inSource = inDestination.Count > 0 ? inDestination : await FindAsync(context.Source, "v1.0/servicePrincipals", filter, AppSelect, ct);
         var name = inSource.Count > 0 ? Text(inSource[0], "displayName") : appId;
 
+        if (inDestination.Count == 0 && context.MigratedAppIds.TryGetValue(appId, out var migratedId)
+            && (await FindAsync(context.Destination, "v1.0/servicePrincipals", $"appId eq {GraphQuery.Literal(migratedId)}", AppSelect, ct)) is [var migrated, ..])
+        {
+            var copy = new Mapping { TargetType = ResourceRegistry.Application, Source = new ObjectRef(appId, name, appId), UsedBy = usedBy };
+            return Resolved(copy, MatchKind.MigratedApp, new ObjectRef(migratedId, Text(migrated, "displayName"), migratedId));
+        }
+
         var mapping = new Mapping
         {
             TargetType = ResourceRegistry.Application,
             Source = new ObjectRef(appId, name, appId),
             UsedBy = usedBy,
-            Note = inDestination.Count > 0 ? null : "This app isn't in the destination tenant. Add it there and match again, or remove it from the policies.",
+            Note = inDestination.Count > 0 ? null : "This app isn't in the destination yet. Migrate it in Applications first, then match again; or remove it from the policies.",
         };
 
         return inDestination.Count > 0

@@ -51,6 +51,9 @@ Under **Advanced settings**, set **Allow public client flows** to **Yes**. Save.
 | `Policy.Read.All` | Reading Conditional Access and other policies |
 | `Policy.ReadWrite.ConditionalAccess` | Creating Conditional Access policies and custom authentication strengths (destination only) |
 | `Application.Read.All` | Matching apps referenced by policies |
+| `Application.ReadWrite.All` | Creating enterprise apps migrated in Applications (destination only) |
+| `AppRoleAssignment.ReadWrite.All` | Assigning users and groups to migrated apps (destination only). Movewise never uses it to grant an app's API permissions |
+| `Policy.ReadWrite.ApplicationConfiguration` | Copying SAML apps' claims (destination only) |
 | `Group.ReadWrite.All` | Creating missing groups (destination only) |
 | `DeviceManagementConfiguration.Read.All` / `.ReadWrite.All` | Intune configuration and compliance |
 | `DeviceManagementApps.Read.All` / `.ReadWrite.All` | Intune app protection and configuration |

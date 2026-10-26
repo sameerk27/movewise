@@ -6,7 +6,7 @@ using Movewise.Core.Export;
 namespace Movewise.Core.Deploy;
 
 /// <summary>A saved run, as listed when choosing one to resume or roll back.</summary>
-public sealed record RunSummary(string Path, string RunId, DateTimeOffset Started, string SourceName, int Created, int Remaining, bool RolledBack);
+public sealed record RunSummary(string Path, string RunId, DateTimeOffset Started, string SourceName, int Created, int Remaining, bool RolledBack, RunKind Kind = RunKind.Policies);
 
 /// <summary>
 /// Saves each run to its own folder under %LOCALAPPDATA%\MovewiseData\Runs. Runs hold full policy settings, so they're
@@ -55,8 +55,8 @@ public static class RunStore
         return run;
     }
 
-    /// <summary>Runs into the given destination, newest first. Files that can't be read are left out.</summary>
-    public static IReadOnlyList<RunSummary> List(string destinationTenantId, string? root = null)
+    /// <summary>Runs of one kind into the given destination, newest first. Files that can't be read are left out.</summary>
+    public static IReadOnlyList<RunSummary> List(string destinationTenantId, string? root = null, RunKind kind = RunKind.Policies)
     {
         var folders = (root is null ? new[] { DefaultRoot, OldRoot } : [root]).Where(Directory.Exists);
 
@@ -66,8 +66,8 @@ public static class RunStore
             try
             {
                 var run = Load(path);
-                if (run.DestinationTenantId == destinationTenantId)
-                    runs.Add(new RunSummary(path, run.RunId, run.Started, run.SourceName, run.CreatedInDestination, run.RemainingCount, run.RolledBack is not null));
+                if (run.DestinationTenantId == destinationTenantId && run.Kind == kind)
+                    runs.Add(new RunSummary(path, run.RunId, run.Started, run.SourceName, run.CreatedInDestination, run.RemainingCount, run.RolledBack is not null, run.Kind));
             }
             catch (Exception ex) when (ex is IOException or JsonException or InvalidDataException or UnauthorizedAccessException)
             {

@@ -40,7 +40,17 @@ public enum StepStatus
     RollbackFailed,
 }
 
-/// <summary>One object to create in the destination: a group, or a policy.</summary>
+/// <summary>What a run migrates. Each kind is deployed and rolled back by its own engine, and listed on its own screen.</summary>
+public enum RunKind
+{
+    /// <summary>Policies and settings, and the groups they need (<see cref="Deployer"/>).</summary>
+    Policies,
+
+    /// <summary>Applications, with their owners and assignments (<see cref="AppDeployer"/>).</summary>
+    Applications,
+}
+
+/// <summary>One object to create in the destination: a group, a policy, or an app.</summary>
 public sealed class DeployStep
 {
     public required string Key { get; init; }
@@ -55,6 +65,15 @@ public sealed class DeployStep
 
     /// <summary>Intune assignments, sent after the policy exists.</summary>
     public JsonArray? Assignments { get; init; }
+
+    /// <summary>For an app: the destination users to add as its owners, once it exists.</summary>
+    public JsonArray? Owners { get; init; }
+
+    /// <summary>For an app registration: its new app ID in the destination, once created.</summary>
+    public string? AppId { get; set; }
+
+    /// <summary>For an app registration: its service principal in the destination (<see cref="DestinationId"/> is the registration).</summary>
+    public string? ServicePrincipalId { get; set; }
 
     /// <summary>Apps an app protection policy covers, sent after the policy exists.</summary>
     public JsonArray? Apps { get; init; }
@@ -141,6 +160,9 @@ public sealed class DeployRun
     public required string DestinationTenantId { get; init; }
     public required string DestinationName { get; init; }
     public required List<DeployStep> Steps { get; init; }
+
+    /// <summary>Policies unless set: runs saved before there were other kinds were all policy runs.</summary>
+    public RunKind Kind { get; init; }
 
     public DateTimeOffset? Completed { get; set; }
     public DateTimeOffset? RolledBack { get; set; }

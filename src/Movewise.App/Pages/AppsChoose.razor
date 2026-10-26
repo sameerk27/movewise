@@ -1,0 +1,293 @@
+@page "/apps"
+@using System.Text.Json.Nodes
+@using Movewise.Core.Preflight
+@inject MigrationState State
+@inject ApplicationsState Apps
+@inject ApplicationsService Applications
+@inject NavigationManager Nav
+@implements IDisposable
+
+<div class="page">
+    <header class="page-head">
+        <div class="head-row">
+            <div class="head-text">
+                <h1>Choose applications to migrate</h1>
+                <p class="muted">Apps Movewise found in @SourceName: enterprise apps from other organizations, which keep their app ID, and @SourceName's own app registrations and gallery apps, which get a new one. Microsoft's own apps are left out: every tenant has them.</p>
+            </div>
+            @if (State.ReadyToDiscover)
+            {
+                <div class="head-actions">
+                    <button class="btn ghost" disabled="@busy" @onclick="ReadAsync">Read again</button>
+                </div>
+            }
+        </div>
+        <StepBar Current="1" Applications="true" />
+    </header>
+
+    <div class="content">
+        @if (!State.ReadyToDiscover)
+        {
+            <div class="alert warn">Connect both tenants first. <a href="">Go to Connect</a></div>
+        }
+        else if (State.Source!.IsBaseline)
+        {
+            <div class="alert warn">The source is a saved baseline, which has no apps. Sign in to the source tenant to migrate its apps. <a href="">Go to Connect</a></div>
+        }
+        else if (busy)
+        {
+            <div class="card pad" role="status">@progress</div>
+        }
+        else if (error is not null)
+        {
+            <div class="alert bad" role="alert">@error</div>
+        }
+        else
+        {
+            if (requested is not null)
+            {
+                <div class="alert @(requestedFound ? "ok" : "warn")" role="status">@requested</div>
+            }
+
+            if (Apps.Warnings.Count > 0)
+            {
+                <div class="alert warn" role="alert">
+                    <b>Some apps couldn't be read, so they're missing from this list.</b>
+                    <ul>
+                        @foreach (var warning in Apps.Warnings)
+                        {
+                            <li>@warning.Message</li>
+                        }
+                    </ul>
+                </div>
+            }
+
+            <div class="stats">
+                <div class="card stat"><b>@Apps.Apps.Count</b><span class="muted">apps found</span></div>
+                <div class="card stat"><b>@Apps.Selected.Count</b><span class="muted">selected</span></div>
+                <div class="card stat"><b class="warn-text">@Apps.Apps.Count(NeedsConsent)</b><span class="muted">with API permissions to consent to</span></div>
+            </div>
+
+            <div class="chips" role="group" aria-label="Filter by kind">
+                @foreach (var (key, name) in Filters)
+                {
+                    var count = Apps.Apps.Count(a => Shows(key, a));
+                    @if (key == UsedByPolicies && count == 0)
+                    {
+                        continue;
+                    }
+                    <button class="chip @(filter == key ? "on" : "")" aria-pressed="@(filter == key ? "true" : "false")" @onclick="@(() => filter = key)">
+                        @name <span>@count</span>
+                    </button>
+                }
+            </div>
+
+            <section class="card table">
+                <div class="row head">
+                    <span><input type="checkbox" aria-label="Select all shown" checked="@AllSelected" @onchange="ToggleAll" /></span>
+                    <span>Application</span><span>Kind</span><span>Sign-on</span><span>Assigned to</span><span>Status</span>
+                </div>
+                @if (!Visible.Any())
+                {
+                    <div class="empty muted">No apps of this kind were found in @SourceName.</div>
+                }
+                @foreach (var app in Visible)
+                {
+                    var key = MigrationState.Key(app);
+                    var (pill, text) = Status(app);
+                    <div class="row">
+                        <span><input type="checkbox" aria-label="Select @app.DisplayName" checked="@Apps.Selected.Contains(key)" @onchange="@(e => Toggle(key, e))" /></span>
+                        <span class="stack">
+                            <span class="strong">@app.DisplayName</span>
+                            <span class="muted small">@Detail(app)</span>
+                        </span>
+                        <span class="muted">@app.Type.DisplayName</span>
+                        <span class="muted">@SignOn(app)</span>
+                        <span class="muted">@AssignedTo(app)</span>
+                        <span><span class="pill @pill">@text</span></span>
+                    </div>
+                }
+            </section>
+        }
+    </div>
+
+    <footer class="page-foot">
+        <span class="muted">@Apps.Selected.Count of @Apps.Apps.Count selected</span>
+        <div class="head-actions">
+            <a class="btn ghost" href="">Back</a>
+            <button class="btn primary" disabled="@(busy || Apps.Selected.Count == 0)" @onclick="@(() => Nav.NavigateTo("apps/map"))">
+                Map users &amp; groups
+                <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M5 12h14M13 6l6 6-6 6"></path></svg>
+            </button>
+        </div>
+    </footer>
+</div>
+
+@code {
+    const string UsedByPolicies = "policies";
+
+    bool busy;
+    string progress = "";
+    string? error;
+    string? requested;
+    bool requestedFound;
+    string? filter;
+
+    static readonly (string? Key, string Name)[] Filters =
+    [
+        (null, "All"),
+        (ResourceRegistry.EnterpriseApp, "Enterprise apps"),
+        (ResourceRegistry.AppRegistration, "App registrations"),
+        (ResourceRegistry.GalleryApp, "Gallery apps"),
+        (UsedByPolicies, "Used by policies"),
+    ];
+
+    string SourceName => State.Source?.Info.DisplayName ?? "the source tenant";
+    IEnumerable<ExportedResource> Visible => Apps.Apps.Where(a => Shows(filter, a));
+    bool AllSelected => Visible.Any() && Visible.All(a => Apps.Selected.Contains(MigrationState.Key(a)));
+
+    bool Shows(string? key, ExportedResource app) => key switch
+    {
+        null => true,
+        UsedByPolicies => PoliciesUsing(app).Count > 0,
+        _ => app.Type.Id == key,
+    };
+
+    /// <summary>The discovered policies that point at this app, by app ID.</summary>
+    IReadOnlyList<string> PoliciesUsing(ExportedResource app)
+    {
+        var appId = Text(app, "appId");
+        return State.Exported
+            .Where(p => p.Dependencies.Any(d => d.TargetType == ResourceRegistry.Application && string.Equals(d.Value, appId, StringComparison.OrdinalIgnoreCase)))
+            .Select(p => p.DisplayName)
+            .ToList();
+    }
+
+    protected override async Task OnInitializedAsync()
+    {
+        Apps.Changed += OnStateChanged;
+        if (State.ReadyToDiscover && !State.Source!.IsBaseline && !Apps.IsRead)
+            await ReadAsync();
+        else
+            TakeRequest();
+    }
+
+    async Task ReadAsync()
+    {
+        busy = true;
+        error = null;
+        progress = "Reading apps…";
+        try
+        {
+            await Applications.ReadAsync(new Progress<string>(text =>
+            {
+                progress = text;
+                InvokeAsync(StateHasChanged);
+            }));
+            TakeRequest();
+        }
+        catch (Exception ex)
+        {
+            error = $"Couldn't read the apps. {ex.Message}";
+        }
+        finally
+        {
+            busy = false;
+        }
+    }
+
+    /// <summary>Ticks the app the policy Map sent us here for, and says so.</summary>
+    void TakeRequest()
+    {
+        if (Apps.RequestedAppId is not { } appId || !Apps.IsRead)
+            return;
+        var name = Apps.TakeRequest();
+        requestedFound = name is not null;
+        requested = name is not null
+            ? $"{name} is ticked. Deploy it, then go back to Map dependencies in Migrations and choose Match again."
+            : $"The app with app ID {appId} isn't one Movewise can migrate from {SourceName}: it may be Microsoft's own, made from a gallery template, or no longer there. Add it to the destination by hand, or remove it from the policies.";
+    }
+
+    void Toggle(string key, ChangeEventArgs e)
+    {
+        if (e.Value is true)
+            Apps.Selected.Add(key);
+        else
+            Apps.Selected.Remove(key);
+        Apps.NotifyChanged();
+    }
+
+    void ToggleAll(ChangeEventArgs e)
+    {
+        var keys = Visible.Select(MigrationState.Key).ToList();
+        if (e.Value is true)
+            Apps.Selected.UnionWith(keys);
+        else
+            Apps.Selected.ExceptWith(keys);
+        Apps.NotifyChanged();
+    }
+
+    static bool NeedsConsent(ExportedResource app) => AppPreflight.Strings(app.Settings["apiPermissions"]).Count > 0;
+
+    static (string Pill, string Text) Status(ExportedResource app)
+    {
+        var notMigrated = AppPreflight.Strings(app.Settings["notMigrated"]);
+        return app.Settings["saml"] is JsonObject ? ("warn", "New certificate")
+            : NeedsConsent(app) ? ("warn", "Needs consent")
+            : notMigrated.Any(n => n.StartsWith("Client secrets", StringComparison.Ordinal)) ? ("warn", "New secret needed")
+            : notMigrated.Count > 0 ? ("neutral", "Partial")
+            : ("ok", "Ready");
+    }
+
+    string Detail(ExportedResource app)
+    {
+        var parts = new List<string>();
+        if (app.Type.Id == ResourceRegistry.AppRegistration)
+            parts.Add($"Registered in {SourceName}");
+        else if (app.Type.Id == ResourceRegistry.GalleryApp)
+            parts.Add($"From the gallery ({app.Settings["template"]?["displayName"]})");
+        else if (Text(app, "publisherName") is { Length: > 0 } publisher)
+            parts.Add(publisher);
+        parts.Add($"app ID {Text(app, "appId")}");
+        if (PoliciesUsing(app).Count is var policies and > 0)
+            parts.Add($"used by {policies} polic{(policies == 1 ? "y" : "ies")}");
+        return string.Join(" · ", parts);
+    }
+
+    static string SignOn(ExportedResource app)
+    {
+        if (app.Settings["saml"] is JsonObject)
+            return "SAML";
+        var principal = app.Type.Id == ResourceRegistry.EnterpriseApp ? app.Settings : app.Settings["servicePrincipal"] as JsonObject;
+        return (principal?["preferredSingleSignOnMode"] as JsonValue)?.ToString() switch
+        {
+            "saml" => "SAML",
+            "password" => "Password",
+            "oidc" => "OpenID Connect",
+            // A registration with no sign-in addresses signs in as itself, with a secret or certificate.
+            _ when app.Type.Id == ResourceRegistry.AppRegistration && !HasRedirects(app) => "Daemon (app-only)",
+            _ when app.Type.Id == ResourceRegistry.AppRegistration => "OpenID Connect",
+            "notSupported" or null or "" => "—",
+            var mode => mode,
+        };
+    }
+
+    static bool HasRedirects(ExportedResource app) =>
+        new[] { "web", "spa", "publicClient" }.Any(p => app.Settings[p]?["redirectUris"] is JsonArray { Count: > 0 });
+
+    static string AssignedTo(ExportedResource app)
+    {
+        var users = (app.Settings["assignedUsers"] as JsonArray)?.Count ?? 0;
+        var groups = (app.Settings["assignedGroups"] as JsonArray)?.Count ?? 0;
+        var parts = new List<string>();
+        if (groups > 0) parts.Add($"{groups} group{(groups == 1 ? "" : "s")}");
+        if (users > 0) parts.Add($"{users} user{(users == 1 ? "" : "s")}");
+        return parts.Count == 0 ? "No one" : string.Join(", ", parts);
+    }
+
+    static string Text(ExportedResource app, string name) =>
+        app.Settings[name] is JsonValue value && value.TryGetValue<string>(out var text) ? text : "";
+
+    void OnStateChanged() => InvokeAsync(StateHasChanged);
+
+    public void Dispose() => Apps.Changed -= OnStateChanged;
+}

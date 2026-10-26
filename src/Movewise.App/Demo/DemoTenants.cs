@@ -11,7 +11,10 @@ namespace Movewise.App.Demo;
 /// <summary>
 /// Two made-up tenants, Contoso (source) and Fabrikam (destination), for trying Movewise without real tenants.
 /// They're built so every screen has something to show: a name conflict, a missing license, a group with no match,
-/// a domain to map, an address that isn't in the destination, sublabels, and Teams group assignments.
+/// a domain to map, an address that isn't in the destination, sublabels, Teams group assignments, and enterprise apps
+/// (one already in the destination, one assigned to a group with no match, one with SAML to set up by hand) and app
+/// registrations (one a Conditional Access policy uses, one a daemon with a client secret) and a gallery app with SAML
+/// single sign-on and claims.
 /// Everything stays in memory; deploying changes only the demo destination.
 /// </summary>
 static class DemoTenants
@@ -33,6 +36,38 @@ static class DemoTenants
     const string CorporateFilter = "a5000000-0000-4000-8000-000000000001";
     const string ConfidentialLabel = "a6000000-0000-4000-8000-000000000001";
     const string FinanceLabel = "a6000000-0000-4000-8000-000000000002";
+    const string Anna = "a2000000-0000-4000-8000-000000000002";
+
+    // Other organizations' apps: the same app ID in both tenants.
+    const string GraphApp = "00000003-0000-0000-c000-000000000000";
+    const string MicrosoftOwner = "f8cdef31-a31e-4b4a-93e4-5f571e91255a";
+    const string DefaultRole = "00000000-0000-0000-0000-000000000000";
+    const string UserReadAll = "df021288-bdef-4463-88db-98f22de89214";
+    static readonly (string AppId, string Name)[] SaasApps =
+    [
+        ("c1000000-0000-4000-8000-000000000001", "Zoom"),
+        ("c1000000-0000-4000-8000-000000000002", "Miro"),
+        ("c1000000-0000-4000-8000-000000000003", "Slack"),
+        ("c1000000-0000-4000-8000-000000000004", "DocuSign"),
+    ];
+    const string ZoomAdminRole = "d1000000-0000-4000-8000-000000000001";
+
+    // Contoso's own app registrations: new app IDs in the destination.
+    const string HrPortalApp = "c2000000-0000-4000-8000-000000000001";
+    const string PayrollApp = "c2000000-0000-4000-8000-000000000002";
+    const string HrAdminRole = "e1000000-0000-4000-8000-000000000001";
+
+    // A gallery app Contoso set up with SAML. Apps made from a template start with its User and msiam_access roles.
+    const string SalesforceApp = "c3000000-0000-4000-8000-000000000001";
+    const string SalesforceTemplate = "d6b2e5a8-0000-4000-8000-0000000000f1";
+    const string TemplateUserRole = "18d14569-c3bd-439b-9a66-3a2aee01d14f";
+    const string SalesRepRole = "f1000000-0000-4000-8000-000000000001";
+
+    static JsonObject GalleryTemplate() => J($$"""
+        { "id": "{{SalesforceTemplate}}", "displayName": "Salesforce", "publisher": "Salesforce", "supportedSingleSignOnModes": ["saml"],
+          "__appRoles": [ { "id": "{{TemplateUserRole}}", "displayName": "User", "value": null, "allowedMemberTypes": ["User"], "isEnabled": true, "description": "User" },
+                          { "id": "b9632174-c057-4f7e-951b-be3adc52bfe6", "displayName": "msiam_access", "value": null, "allowedMemberTypes": ["User"], "isEnabled": true, "description": "msiam_access" } ] }
+        """);
 
     public static (TenantConnection Source, TenantConnection Destination) Create() =>
         (Connection(TenantRole.Source, Contoso(), SourceGraph(), SourceExchange(), SourceCompliance(), SourceTeams()),
@@ -109,8 +144,91 @@ static class DemoTenants
             J($$"""{ "id": "{{Executives}}", "displayName": "Executives", "mailNickname": "execs", "mail": "execs@contoso.com", "securityEnabled": true, "mailEnabled": true, "groupTypes": ["Unified"] }"""))
         .Add("v1.0/users",
             J($$"""{ "id": "{{BreakGlassUser}}", "displayName": "Break glass 1", "userPrincipalName": "breakglass1@contoso.onmicrosoft.com", "mail": null }"""),
-            J("""{ "id": "a2000000-0000-4000-8000-000000000002", "displayName": "Anna Lindqvist", "userPrincipalName": "anna@contoso.com", "mail": "anna@contoso.com" }"""))
-        .Add("v1.0/servicePrincipals")
+            J($$"""{ "id": "{{Anna}}", "displayName": "Anna Lindqvist", "userPrincipalName": "anna@contoso.com", "mail": "anna@contoso.com" }"""))
+
+        // Applications: Microsoft Graph (Microsoft's, never migrated) and four SaaS apps with their access.
+        .Add("v1.0/servicePrincipals",
+            J($$"""{ "id": "a7000000-0000-4000-8000-000000000000", "appId": "{{GraphApp}}", "displayName": "Microsoft Graph", "appOwnerOrganizationId": "{{MicrosoftOwner}}", "servicePrincipalType": "Application", "appRoles": [ { "id": "{{UserReadAll}}", "value": "User.Read.All" } ] }"""),
+            J($$"""
+            { "id": "a7000000-0000-4000-8000-000000000001", "appId": "{{SaasApps[0].AppId}}", "displayName": "Zoom", "publisherName": "Zoom Video Communications",
+              "appOwnerOrganizationId": "4f6e0000-0000-4000-8000-0000000000a1", "servicePrincipalType": "Application", "accountEnabled": true,
+              "appRoleAssignmentRequired": true, "preferredSingleSignOnMode": "oidc", "homepage": "https://zoom.us", "notes": "Video meetings for all staff.",
+              "tags": ["WindowsAzureActiveDirectoryIntegratedApp"],
+              "__appRoleAssignedTo": [ { "id": "z1", "principalType": "Group", "principalId": "{{AllStaff}}", "appRoleId": "{{DefaultRole}}" },
+                                       { "id": "z2", "principalType": "User", "principalId": "{{Anna}}", "appRoleId": "{{ZoomAdminRole}}" } ],
+              "__owners": [ { "@odata.type": "#microsoft.graph.user", "id": "{{Anna}}" } ] }
+            """),
+            J($$"""
+            { "id": "a7000000-0000-4000-8000-000000000002", "appId": "{{SaasApps[1].AppId}}", "displayName": "Miro", "publisherName": "Miro",
+              "appOwnerOrganizationId": "4f6e0000-0000-4000-8000-0000000000a2", "servicePrincipalType": "Application", "accountEnabled": true,
+              "appRoleAssignmentRequired": true, "preferredSingleSignOnMode": "oidc", "tags": ["WindowsAzureActiveDirectoryIntegratedApp", "HideApp"],
+              "__appRoleAssignedTo": [ { "id": "m1", "principalType": "Group", "principalId": "{{Executives}}", "appRoleId": "{{DefaultRole}}" } ] }
+            """),
+            J($$"""
+            { "id": "a7000000-0000-4000-8000-000000000003", "appId": "{{SaasApps[2].AppId}}", "displayName": "Slack", "publisherName": "Slack Technologies",
+              "appOwnerOrganizationId": "4f6e0000-0000-4000-8000-0000000000a3", "servicePrincipalType": "Application", "accountEnabled": true,
+              "appRoleAssignmentRequired": true, "preferredSingleSignOnMode": "oidc", "tags": ["WindowsAzureActiveDirectoryIntegratedApp"],
+              "__appRoleAssignedTo": [ { "id": "s1", "principalType": "Group", "principalId": "{{AllStaff}}", "appRoleId": "{{DefaultRole}}" } ],
+              "__appRoleAssignments": [ { "id": "s2", "resourceId": "a7000000-0000-4000-8000-000000000000", "resourceDisplayName": "Microsoft Graph", "appRoleId": "{{UserReadAll}}" } ] }
+            """),
+            J($$"""
+            { "id": "a7000000-0000-4000-8000-000000000004", "appId": "{{SaasApps[3].AppId}}", "displayName": "DocuSign", "publisherName": "DocuSign",
+              "appOwnerOrganizationId": "4f6e0000-0000-4000-8000-0000000000a4", "servicePrincipalType": "Application", "accountEnabled": true,
+              "appRoleAssignmentRequired": false, "preferredSingleSignOnMode": "saml", "loginUrl": "https://account.docusign.com",
+              "tags": ["WindowsAzureActiveDirectoryIntegratedApp"], "keyCredentials": [ { "keyId": "k1", "usage": "Sign" }, { "keyId": "k2", "usage": "Verify" } ],
+              "__appRoleAssignedTo": [ { "id": "d1", "principalType": "Group", "principalId": "{{IntunePilot}}", "appRoleId": "{{DefaultRole}}" } ] }
+            """),
+            // The registrations' and the gallery app's own service principals.
+            J($$"""
+            { "id": "a7000000-0000-4000-8000-000000000007", "appId": "{{SalesforceApp}}", "displayName": "Salesforce", "appOwnerOrganizationId": "{{SourceTenantId}}",
+              "servicePrincipalType": "Application", "applicationTemplateId": "{{SalesforceTemplate}}", "accountEnabled": true, "appRoleAssignmentRequired": true,
+              "preferredSingleSignOnMode": "saml", "samlSingleSignOnSettings": { "relayState": "https://contoso.my.salesforce.com/home" },
+              "loginUrl": "https://contoso.my.salesforce.com", "notificationEmailAddresses": ["admin@contoso.com"],
+              "tags": ["WindowsAzureActiveDirectoryIntegratedApp"], "keyCredentials": [ { "keyId": "sk1", "usage": "Sign" }, { "keyId": "sk2", "usage": "Verify" } ],
+              "__appRoleAssignedTo": [ { "id": "sf1", "principalType": "Group", "principalId": "{{AllStaff}}", "appRoleId": "{{TemplateUserRole}}" },
+                                       { "id": "sf2", "principalType": "User", "principalId": "{{Anna}}", "appRoleId": "{{SalesRepRole}}" } ],
+              "__claimsMappingPolicies": [ { "id": "cm1", "displayName": "Salesforce: employee ID", "definition": ["{\"ClaimsMappingPolicy\":{\"Version\":1,\"IncludeBasicClaimSet\":\"true\",\"ClaimsSchema\":[{\"Source\":\"user\",\"ID\":\"employeeid\",\"SamlClaimType\":\"employeeid\" } ] } }"] } ],
+              "__claimsPolicy": { "includeBasicClaimSet": true, "includeApplicationIdInIssuer": false,
+                                  "claims": [ { "@odata.type": "#microsoft.graph.customClaim", "name": "department", "namespace": null, "configurations": [ { "attribute": { "source": "user", "name": "department" } } ] } ] } }
+            """),
+            J($$"""
+            { "id": "a7000000-0000-4000-8000-000000000005", "appId": "{{HrPortalApp}}", "displayName": "Contoso HR Portal", "appOwnerOrganizationId": "{{SourceTenantId}}",
+              "servicePrincipalType": "Application", "accountEnabled": true, "appRoleAssignmentRequired": true, "tags": ["WindowsAzureActiveDirectoryIntegratedApp"],
+              "__appRoleAssignedTo": [ { "id": "h1", "principalType": "Group", "principalId": "{{AllStaff}}", "appRoleId": "{{DefaultRole}}" },
+                                       { "id": "h2", "principalType": "User", "principalId": "{{Anna}}", "appRoleId": "{{HrAdminRole}}" } ] }
+            """),
+            J($$"""
+            { "id": "a7000000-0000-4000-8000-000000000006", "appId": "{{PayrollApp}}", "displayName": "Payroll Sync", "appOwnerOrganizationId": "{{SourceTenantId}}",
+              "servicePrincipalType": "Application", "accountEnabled": true, "appRoleAssignmentRequired": false,
+              "__appRoleAssignments": [ { "id": "p2", "resourceId": "a7000000-0000-4000-8000-000000000000", "resourceDisplayName": "Microsoft Graph", "appRoleId": "{{UserReadAll}}" } ] }
+            """))
+        .Add("v1.0/oauth2PermissionGrants",
+            J("""{ "id": "g1", "clientId": "a7000000-0000-4000-8000-000000000001", "resourceId": "a7000000-0000-4000-8000-000000000000", "consentType": "AllPrincipals", "scope": "openid profile email User.Read" }"""),
+            J("""{ "id": "g2", "clientId": "a7000000-0000-4000-8000-000000000005", "resourceId": "a7000000-0000-4000-8000-000000000000", "consentType": "AllPrincipals", "scope": "User.Read Group.Read.All" }"""))
+        .Add("v1.0/applicationTemplates", GalleryTemplate())
+        .Add("v1.0/applications",
+            J($$"""
+            { "id": "a8000000-0000-4000-8000-000000000001", "appId": "{{HrPortalApp}}", "displayName": "Contoso HR Portal", "signInAudience": "AzureADMyOrg",
+              "identifierUris": ["api://{{HrPortalApp}}"],
+              "web": { "redirectUris": ["https://hr.contoso.com/signin-oidc"], "homePageUrl": "https://hr.contoso.com", "implicitGrantSettings": { "enableIdTokenIssuance": true, "enableAccessTokenIssuance": false } },
+              "appRoles": [ { "id": "{{HrAdminRole}}", "value": "HR.Admin", "displayName": "HR admins", "description": "Can manage HR records.", "allowedMemberTypes": ["User"], "isEnabled": true } ],
+              "requiredResourceAccess": [ { "resourceAppId": "{{GraphApp}}", "resourceAccess": [ { "id": "e1fe6dd8-ba31-4d61-89e7-88639da4683d", "type": "Scope" }, { "id": "5f8c59db-677d-491f-a6b8-5f174b11ec1d", "type": "Scope" } ] } ],
+              "passwordCredentials": [], "keyCredentials": [],
+              "__owners": [ { "@odata.type": "#microsoft.graph.user", "id": "{{Anna}}" } ] }
+            """),
+            J($$"""
+            { "id": "a8000000-0000-4000-8000-000000000003", "appId": "{{SalesforceApp}}", "displayName": "Salesforce", "signInAudience": "AzureADMyOrg",
+              "identifierUris": ["https://saml.salesforce.com"],
+              "web": { "redirectUris": ["https://contoso.my.salesforce.com/?so=00D5g000000contoso"], "logoutUrl": "https://contoso.my.salesforce.com/logout" },
+              "appRoles": [ { "id": "{{TemplateUserRole}}", "displayName": "User", "value": null, "allowedMemberTypes": ["User"], "isEnabled": true, "description": "User" },
+                            { "id": "{{SalesRepRole}}", "displayName": "Sales rep", "value": "Sales.Rep", "allowedMemberTypes": ["User"], "isEnabled": true, "description": "Sales reps" } ],
+              "passwordCredentials": [], "keyCredentials": [] }
+            """),
+            J($$"""
+            { "id": "a8000000-0000-4000-8000-000000000002", "appId": "{{PayrollApp}}", "displayName": "Payroll Sync", "signInAudience": "AzureADMyOrg",
+              "requiredResourceAccess": [ { "resourceAppId": "{{GraphApp}}", "resourceAccess": [ { "id": "{{UserReadAll}}", "type": "Role" } ] } ],
+              "passwordCredentials": [ { "keyId": "p1", "displayName": "Payroll job" } ], "keyCredentials": [] }
+            """))
 
         // Entra ID
         .Add("v1.0/identity/conditionalAccess/namedLocations", J($$"""
@@ -150,6 +268,14 @@ static class DemoTenants
                 "users": { "includeRoles": ["62e90394-69f5-4237-9190-012177145e10"], "excludeUsers": ["{{BreakGlassUser}}"] },
                 "applications": { "includeApplications": ["All"] } },
               "grantControls": { "operator": "AND", "authenticationStrength": { "id": "{{Strength}}", "displayName": "Phishing-resistant plus" } } }
+            """),
+            // Uses Contoso's own app registration, which has a new app ID once migrated in Applications.
+            J($$"""
+            { "id": "c5", "displayName": "CA005 - Require MFA for the HR Portal", "state": "enabled",
+              "conditions": { "clientAppTypes": ["all"],
+                "users": { "includeUsers": [], "includeGroups": ["{{AllStaff}}"], "excludeGroups": ["{{BreakGlass}}"] },
+                "applications": { "includeApplications": ["{{HrPortalApp}}"] } },
+              "grantControls": { "operator": "OR", "builtInControls": ["mfa"] } }
             """))
 
         // Intune
@@ -332,7 +458,18 @@ static class DemoTenants
         .Add("v1.0/users",
             J("""{ "id": "b2000000-0000-4000-8000-000000000001", "displayName": "Break glass 1", "userPrincipalName": "breakglass1@fabrikam.onmicrosoft.com", "mail": null }"""),
             J("""{ "id": "b2000000-0000-4000-8000-000000000002", "displayName": "Anna Lindqvist", "userPrincipalName": "anna@fabrikam.com", "mail": "anna@fabrikam.com" }"""))
-        .Add("v1.0/servicePrincipals")
+        // Slack is already here, set up differently and with no one assigned.
+        .KnowsApps(SaasApps)
+        .Add("v1.0/servicePrincipals",
+            J($$"""{ "id": "b7000000-0000-4000-8000-000000000000", "appId": "{{GraphApp}}", "displayName": "Microsoft Graph", "appOwnerOrganizationId": "{{MicrosoftOwner}}", "servicePrincipalType": "Application" }"""),
+            J($$"""
+            { "id": "b7000000-0000-4000-8000-000000000003", "appId": "{{SaasApps[2].AppId}}", "displayName": "Slack", "publisherName": "Slack Technologies",
+              "appOwnerOrganizationId": "4f6e0000-0000-4000-8000-0000000000a3", "servicePrincipalType": "Application", "accountEnabled": true,
+              "appRoleAssignmentRequired": false, "tags": ["WindowsAzureActiveDirectoryIntegratedApp"] }
+            """))
+        .Add("v1.0/oauth2PermissionGrants")
+        .Add("v1.0/applicationTemplates", GalleryTemplate())
+        .Add("v1.0/policies/claimsMappingPolicies")
         .Add("v1.0/identity/conditionalAccess/namedLocations")
         .Add("v1.0/policies/authenticationStrengthPolicies")
         .Add("v1.0/identity/conditionalAccess/policies", J("""

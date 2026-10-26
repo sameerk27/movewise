@@ -262,6 +262,12 @@ public sealed record ResourceType(
     /// </summary>
     public bool ReferenceOnly { get; init; }
 
+    /// <summary>
+    /// True for the types of the Applications section (enterprise apps): migrated there with their own steps, never
+    /// listed, compared or deployed with the policies.
+    /// </summary>
+    public bool AppsOnly { get; init; }
+
     /// <summary>The property that identifies a Graph object, as read and once created, when that isn't "id" (cross-tenant partners use tenantId).</summary>
     public string IdProperty { get; init; } = "id";
 

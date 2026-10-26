@@ -27,10 +27,21 @@ sealed class FakeGraph : IGraphWriter
         return this;
     }
 
+    Func<string, JsonNode, JsonObject?>? _postAnswer;
+
+    /// <summary>Answers posts that return more than an ID, such as making an app from a gallery template; null means the usual answer.</summary>
+    public FakeGraph PostAnswer(Func<string, JsonNode, JsonObject?> answer)
+    {
+        _postAnswer = answer;
+        return this;
+    }
+
     public Task<JsonObject?> PostAsync(string path, JsonNode body, CancellationToken ct = default)
     {
         ThrowIfFailing(path);
         Posts.Add((path, body.DeepClone()));
+        if (_postAnswer?.Invoke(path, body) is { } answered)
+            return Task.FromResult<JsonObject?>(answered);
         var isAction = path.EndsWith("/assign", StringComparison.Ordinal) || path.EndsWith("/targetApps", StringComparison.Ordinal);
         return Task.FromResult(isAction ? null : new JsonObject { ["id"] = $"new-{++_created}" });
     }
@@ -94,9 +105,20 @@ sealed class FakeGraph : IGraphWriter
         return this;
     }
 
+    Func<string, JsonObject?>? _answer;
+
+    /// <summary>Answers object reads with no canned JSON, such as a filtered lookup; null means nothing is there.</summary>
+    public FakeGraph Answer(Func<string, JsonObject?> answer)
+    {
+        _answer = answer;
+        return this;
+    }
+
     public Task<JsonObject> GetObjectAsync(string path, CancellationToken ct = default)
     {
         Record(path);
+        if (!_objects.ContainsKey(path) && _answer?.Invoke(path) is { } answered)
+            return Task.FromResult(answered);
         return Task.FromResult((JsonObject)_objects[path].DeepClone());
     }
 
