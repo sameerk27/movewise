@@ -20,11 +20,11 @@
   "@context": "https://schema.org",
   "@type": "SoftwareApplication",
   "name": "Movewise",
-  "description": "Windows app that migrates Microsoft 365 policies between tenants (Conditional Access, Intune, Defender for Office 365, Defender for Endpoint, Exchange Online, Purview, Teams, SharePoint) with dependency mapping, a pre-flight dry run, ordered deployment and rollback. Also compares tenants, takes snapshots, monitors drift and saves baselines.",
+  "description": "Windows app that migrates Microsoft 365 policies between tenants (Conditional Access, Intune, Defender for Office 365, Defender for Endpoint, Exchange Online, Purview, Teams, SharePoint) with dependency mapping, a pre-flight dry run, ordered deployment and rollback. Also migrates enterprise apps, app registrations and SAML apps, compares tenants, takes snapshots, monitors drift and saves baselines.",
   "applicationCategory": "BusinessApplication",
   "applicationSubCategory": "Microsoft 365 tenant migration",
   "operatingSystem": "Windows 10, Windows 11",
-  "softwareVersion": "0.2.0",
+  "softwareVersion": "0.3.0",
   "license": "https://opensource.org/licenses/MIT",
   "isAccessibleForFree": true,
   "offers": { "@type": "Offer", "price": "0", "priceCurrency": "USD" },
@@ -46,6 +46,7 @@
       <a href="intune.html">Intune</a>
       <a href="defender-exchange.html">Defender &amp; Exchange</a>
       <a href="purview-teams.html">Purview &amp; Teams</a>
+      <a href="applications.html">Applications</a>
       <a href="compare-drift.html">Compare &amp; drift</a>
       <a href="faq.html">FAQ</a>
     </nav>
@@ -55,9 +56,9 @@
 <main>
 <section class="hero">
   <div class="wrap">
-    <span class="tag">Free · open source · Windows · v0.2.0</span>
+    <span class="tag">Free · open source · Windows · v0.3.0</span>
     <h1>Migrate Microsoft 365 policies between tenants. <span>Dry run first, rollback after.</span></h1>
-    <p class="lead">Movewise is a free Windows app for tenant-to-tenant migrations. It moves Conditional Access, Intune, Defender, Exchange, Purview and Teams policies from one Microsoft 365 tenant to another, matches every group, user and app they point at, and shows you exactly what will change before anything is written.</p>
+    <p class="lead">Movewise is a free Windows app for tenant-to-tenant migrations. It moves Conditional Access, Intune, Defender, Exchange, Purview and Teams policies, and enterprise applications, from one Microsoft 365 tenant to another, matches every group, user and app they point at, and shows you exactly what will change before anything is written.</p>
     <div class="actions">
       <a class="btn primary" href="https://github.com/sameerk27/movewise/releases/latest">Download for Windows</a>
       <a class="btn ghost" href="https://github.com/sameerk27/movewise">View on GitHub</a>
@@ -83,12 +84,13 @@
 <section class="block alt">
   <div class="wrap">
     <h2>What Movewise migrates</h2>
-    <p class="intro">Policies and settings across eight Microsoft 365 services. Mailboxes, files and other user data are out of scope.</p>
+    <p class="intro">Policies and settings across eight Microsoft 365 services, and the apps people sign in to. Mailboxes, files and other user data are out of scope.</p>
     <div class="grid">
       <div class="card"><h3>Entra ID</h3><p>Conditional Access, named locations, authentication strengths, user settings, the authentication methods policy, cross-tenant access, custom admin roles.</p><a class="more" href="conditional-access.html">Conditional Access migration →</a></div>
       <div class="card"><h3>Intune</h3><p>Settings catalog, device configuration, compliance, app protection, Autopilot profiles, assignment filters and scope tags, with assignments.</p><a class="more" href="intune.html">Intune migration →</a></div>
       <div class="card"><h3>Defender &amp; Exchange</h3><p>Anti-phishing, anti-spam, Safe Links, Safe Attachments, quarantine, Tenant Allow/Block List, mail flow and journal rules, retention tags, and Defender for Endpoint indicators.</p><a class="more" href="defender-exchange.html">Defender and Exchange →</a></div>
       <div class="card"><h3>Purview, Teams &amp; SharePoint</h3><p>DLP and retention policies, sensitivity labels and label policies, Teams policies with group assignments, and SharePoint and OneDrive sharing settings.</p><a class="more" href="purview-teams.html">Purview and Teams →</a></div>
+      <div class="card"><h3>Applications</h3><p>Enterprise apps, app registrations and SAML gallery apps, with owners, user and group assignments, single sign-on and claims. Policies are matched to the migrated apps.</p><a class="more" href="applications.html">Application migration →</a></div>
     </div>
   </div>
 </section>

@@ -1,6 +1,6 @@
 # Movewise
 
-> Movewise is a free, open-source (MIT) Windows desktop app that migrates Microsoft 365 policies from one tenant to another (tenant-to-tenant migration), with dependency mapping, a pre-flight dry run, ordered deployment and rollback. Version 0.2.0 also compares tenants, takes configuration snapshots, monitors configuration drift, restores from snapshots and saves policy baselines.
+> Movewise is a free, open-source (MIT) Windows desktop app that migrates Microsoft 365 policies from one tenant to another (tenant-to-tenant migration), with dependency mapping, a pre-flight dry run, ordered deployment and rollback. Version 0.3.0 also migrates enterprise applications: enterprise apps, app registrations and SAML gallery apps. Since 0.2.0 it also compares tenants, takes configuration snapshots, monitors configuration drift, restores from snapshots and saves policy baselines.
 
 Movewise migrates policies and settings only, not mailboxes, files or other user data. The source tenant is read-only: its Microsoft Graph client has no write methods and its PowerShell sessions refuse anything but Get cmdlets. Conditional Access policies are created in report-only mode, mail flow rules in test mode, DLP in simulation mode and retention policies switched off. Rollback deletes only what a run created and puts changed settings back. Runs on 64-bit Windows 10 and 11; .NET and the Exchange Online and Teams PowerShell modules are bundled. A built-in demo with two sample tenants works without any tenant. Releases are currently unsigned pre-release builds.
 
@@ -14,6 +14,7 @@ Movewise migrates policies and settings only, not mailboxes, files or other user
 - Purview: DLP and retention policies with rules, sensitivity labels and label policies, Endpoint DLP settings
 - Teams: meeting, messaging, calling, app setup, app permission, channels and update policies with group assignments, and org-wide settings
 - SharePoint and OneDrive: sharing, sync and site creation settings
+- Applications: enterprise apps (same app ID), app registrations and gallery apps (new app ID), with owners, user and group assignments, SAML single sign-on, claims and a new signing certificate. Policies are matched to the migrated apps. Admin consent is never granted and secrets aren't copied.
 
 ## Pages
 
@@ -22,6 +23,7 @@ Movewise migrates policies and settings only, not mailboxes, files or other user
 - [Migrate Intune policies](https://sameerk27.github.io/movewise/intune.html)
 - [Migrate Defender and Exchange Online policies](https://sameerk27.github.io/movewise/defender-exchange.html)
 - [Migrate Purview, Teams and SharePoint settings](https://sameerk27.github.io/movewise/purview-teams.html)
+- [Migrate enterprise applications between tenants](https://sameerk27.github.io/movewise/applications.html)
 - [Compare tenants and monitor drift](https://sameerk27.github.io/movewise/compare-drift.html)
 - [FAQ](https://sameerk27.github.io/movewise/faq.html)
 

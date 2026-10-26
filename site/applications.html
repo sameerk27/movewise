@@ -1,0 +1,86 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Migrate enterprise applications between tenants | Movewise</title>
+<meta name="description" content="Migrate enterprise apps, app registrations and SAML gallery apps between Microsoft 365 tenants, with their owners, user and group assignments, single sign-on and claims. Policies are matched to the migrated apps. Admin consent is never granted for you.">
+<link rel="canonical" href="https://sameerk27.github.io/movewise/applications.html">
+<link rel="icon" href="assets/icon.svg" type="image/svg+xml">
+<meta property="og:type" content="article">
+<meta property="og:site_name" content="Movewise">
+<meta property="og:title" content="Migrate enterprise applications between tenants | Movewise">
+<meta property="og:description" content="Migrate enterprise apps, app registrations and SAML gallery apps between Microsoft 365 tenants, with their owners, user and group assignments, single sign-on and claims. Policies are matched to the migrated apps. Admin consent is never granted for you.">
+<meta property="og:url" content="https://sameerk27.github.io/movewise/applications.html">
+<meta property="og:image" content="https://sameerk27.github.io/movewise/img/og-movewise.png">
+<meta name="twitter:card" content="summary_large_image">
+<link rel="stylesheet" href="assets/site.css">
+</head>
+<body>
+<header class="top">
+  <div class="wrap">
+    <a class="brand" href="./"><svg width="26" height="26" viewBox="0 0 26 26" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" aria-hidden="true"><rect x="2" y="6" width="8" height="14" rx="2"/><rect x="16" y="6" width="8" height="14" rx="2"/><path d="M10 13h6"/></svg>Movewise</a>
+    <nav aria-label="Main">
+      <a href="./">Home</a>
+      <a href="conditional-access.html">Conditional Access</a>
+      <a href="intune.html">Intune</a>
+      <a href="defender-exchange.html">Defender &amp; Exchange</a>
+      <a href="purview-teams.html">Purview &amp; Teams</a>
+      <a href="applications.html" aria-current="page">Applications</a>
+      <a href="compare-drift.html">Compare &amp; drift</a>
+      <a href="faq.html">FAQ</a>
+    </nav>
+  </div>
+</header>
+<main>
+<div class="page-head">
+  <div class="wrap">
+    <p class="crumbs"><a href="./">Movewise</a> / Migrate enterprise applications</p>
+    <h1>Migrate enterprise applications between tenants</h1>
+    <p>Move the apps people sign in to, the apps your developers registered, and the SAML apps from the gallery, with who can use them. New in Movewise 0.3.0.</p>
+  </div>
+</div>
+<article class="doc">
+<h2>Four steps, apart from the policies</h2>
+<p><b>Applications</b> has its own place in the sidebar, beside Migrations, and uses the tenants signed in on Connect: <b>Choose apps</b>, <b>Map users &amp; groups</b>, <b>Pre-flight</b> and <b>Deploy</b>. The users, groups and owners of the chosen apps are matched in the destination the same way as for policies, by email, username, name or mail nickname, and anything with no match is chosen by hand or left out.</p>
+
+<h2>What moves</h2>
+<ul>
+  <li><b>Enterprise apps</b>, such as Zoom, Slack or Miro: another organization's app, created in the destination for the same app ID. Its settings come with it (assignment required, visible to users, notes, home page, sign-on URL), with its owners and every user and group assigned to it, each keeping its app role. An app the destination already has can be skipped or updated in place; nothing is taken away from it.</li>
+  <li><b>App registrations</b>, the source's own apps: recreated with a new app ID, with their redirect URIs, app roles (with the same role IDs), optional claims, exposed API scopes and requested permissions, and an application ID URI made from the new app ID. Every new app ID is listed when the run finishes, so you can change anything that signs in with the old one.</li>
+  <li><b>Gallery apps</b>: made again from the same gallery template, then set up as they were in the source: entity ID, reply and logout URLs, and app roles.</li>
+  <li><b>SAML single sign-on</b>: the sign-on mode and relay state, claims mapping policies and the claims on the Attributes &amp; Claims page. Each SAML app gets a <b>new signing certificate</b>, because the old one's private key can't be exported, and pre-flight lists every app whose vendor needs the new certificate or federation metadata.</li>
+</ul>
+
+<h2>Policies find the apps migrated for them</h2>
+<p>An app registration has a new app ID in the destination, so a Conditional Access policy that names it would point at nothing. Movewise keeps a map of every app it migrated, from the old app ID to the new one. On <b>Map dependencies</b>, a policy's app is matched to its migrated copy as <b>Migrated by Movewise</b> and the policy is rewritten with the new app ID. An app the destination doesn't have yet has a <b>Migrate it in Applications</b> button, which opens Applications with that app ticked, and policy pre-flight lists the policies still pointing at missing apps. Migrate the apps first, then the policies.</p>
+
+<h2>What Movewise never does</h2>
+<ul>
+  <li><b>It never grants admin consent.</b> The API permissions an app was granted in the source are listed in pre-flight, for an admin to review and grant in the destination.</li>
+  <li><b>It never copies secrets.</b> Client secrets and certificate private keys can't be exported, and are listed under <b>Set up by hand</b>, with provisioning (SCIM) settings, Application Proxy connectors and password-based sign-on.</li>
+  <li><b>It only removes what it made.</b> Rolling back an app run deletes the apps the run created (Entra ID keeps them in deleted apps for 30 days), puts back the settings of apps it updated, and removes only the owners and assignments it added.</li>
+</ul>
+
+<h2>Before you start</h2>
+<p>In the destination, the account needs Application Administrator, Cloud Application Administrator or Global Administrator, and Movewise asks for three more Microsoft Graph permissions there: <code>Application.ReadWrite.All</code>, <code>AppRoleAssignment.ReadWrite.All</code> and <code>Policy.ReadWrite.ApplicationConfiguration</code>. The <a href="https://github.com/sameerk27/movewise/blob/master/docs/app-registration.md">app registration guide</a> lists what each is used for. The built-in demo has sample apps of every kind, and a Conditional Access policy that uses one of them, so the whole flow can be tried without a tenant.</p>
+</article>
+<section class="cta">
+  <div class="wrap">
+    <h2>Try Movewise free</h2>
+    <p>Windows 10 or 11. Open source, MIT licensed. The built-in demo needs no tenant at all.</p>
+    <div class="actions">
+      <a class="btn primary" href="https://github.com/sameerk27/movewise/releases/latest">Download for Windows</a>
+      <a class="btn ghost" href="https://github.com/sameerk27/movewise">View on GitHub</a>
+    </div>
+  </div>
+</section>
+</main>
+<footer>
+  <div class="wrap">
+    <span>Movewise · MIT licensed · by <a href="https://github.com/sameerk27">Samir Khan</a></span>
+    <span><a href="https://github.com/sameerk27/movewise">GitHub</a> · <a href="https://github.com/sameerk27/movewise/releases">Releases</a> · <a href="https://github.com/sameerk27/movewise/issues">Issues</a> · <a href="faq.html">FAQ</a></span>
+  </div>
+</footer>
+</body>
+</html>
