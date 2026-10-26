@@ -42,6 +42,7 @@
       <a href="intune.html">Intune</a>
       <a href="defender-exchange.html">Defender &amp; Exchange</a>
       <a href="purview-teams.html">Purview &amp; Teams</a>
+      <a href="applications.html">Applications</a>
       <a href="compare-drift.html">Compare &amp; drift</a>
       <a href="faq.html" aria-current="page">FAQ</a>
     </nav>
@@ -68,6 +69,7 @@
 <details><summary>What does it need to run?</summary><p>64-bit Windows 10 or 11. .NET and the Exchange Online and Teams PowerShell modules are included in the installer, which installs for the current user with no admin rights needed.</p></details>
 <details><summary>Is the installer signed?</summary><p>Not yet. Current releases are unsigned test builds, so Windows SmartScreen warns when the installer runs. Try it against test tenants first.</p></details>
 <details><summary>Where is my data kept?</summary><p>On your PC, under <code>%LOCALAPPDATA%\MovewiseData</code>: saved exports, deployment runs, snapshots, baselines and support logs. Support logs have tokens, email addresses, tenant domains and IP addresses removed.</p></details>
+<details><summary>Can it migrate enterprise apps and app registrations?</summary><p>Yes, since version 0.3.0. Enterprise apps keep their app ID; the source's own app registrations and gallery apps are recreated with a new one, and SAML apps get a new signing certificate. Owners and user and group assignments come with them, and Conditional Access policies are matched to the migrated apps. Admin consent is never granted for you, and secrets aren't copied. <a href="applications.html">More on application migration</a>.</p></details>
 <details><summary>Can it compare tenants or detect drift?</summary><p>Yes. Compare shows differences between two tenants, or between a tenant and a snapshot of it. The drift monitor checks each tenant against its latest snapshot, and changes can be restored. <a href="compare-drift.html">More on compare and drift</a>.</p></details>
 </article>
 <section class="cta">
