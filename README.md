@@ -2,21 +2,21 @@
 
 # Movewise
 
-**Free, open-source Microsoft 365 tenant-to-tenant migration tool for policies: move Conditional Access, Intune, Defender, Exchange, Purview and Teams policies to another tenant, with a dry run before anything changes.**
+**Free, open-source Microsoft 365 tenant-to-tenant migration tool for policies and apps: move Conditional Access, Intune, Defender, Exchange, Purview and Teams policies, and enterprise applications, to another tenant, with a dry run before anything changes.**
 
 ![Platform](https://img.shields.io/badge/platform-Windows%2010%20%7C%2011-0078D4)
 ![.NET](https://img.shields.io/badge/.NET-8-512BD4)
 ![UI](https://img.shields.io/badge/UI-WPF%20%2B%20Blazor%20Hybrid-5C2D91)
-![Status](https://img.shields.io/badge/status-pre--release%200.2.0-orange)
+![Status](https://img.shields.io/badge/status-pre--release%200.3.0-orange)
 [![License: MIT](https://img.shields.io/badge/license-MIT-green)](LICENSE)
 
-[Website](https://sameerk27.github.io/movewise/) · [Screenshots](#screenshots) · [Download](#download) · [How it works](#how-it-works) · [What it migrates](#what-it-migrates) · [FAQ](#faq) · [Build from source](#build-from-source) · [Docs](#documentation)
+[Website](https://sameerk27.github.io/movewise/) · [Screenshots](#screenshots) · [Download](#download) · [How it works](#how-it-works) · [Applications](#migrate-enterprise-applications) · [What it migrates](#what-it-migrates) · [FAQ](#faq) · [Build from source](#build-from-source) · [Docs](#documentation)
 
 </div>
 
 ---
 
-Movewise is a free Windows app for **Microsoft 365 tenant-to-tenant migrations**, for mergers, acquisitions, divestitures and MSPs consolidating tenants. It migrates **policies and settings**, not mailboxes or files: Entra ID Conditional Access, Intune, Defender for Office 365, Defender for Endpoint, Exchange Online, Purview, Teams and SharePoint.
+Movewise is a free Windows app for **Microsoft 365 tenant-to-tenant migrations**, for mergers, acquisitions, divestitures and MSPs consolidating tenants. It migrates **policies and settings**, not mailboxes or files: Entra ID Conditional Access, Intune, Defender for Office 365, Defender for Endpoint, Exchange Online, Purview, Teams and SharePoint. It also migrates **enterprise applications**: enterprise apps, app registrations and SAML gallery apps, with who can use them.
 
 An admin signs in to the **source** tenant (read only) and the **destination** tenant, picks the policies to move, maps every group, user, app and named location they depend on, checks the result in a dry run, and deploys. Every run can be resumed, and rolled back to take out only what it created. After the migration, Movewise compares tenants, takes snapshots, monitors configuration drift, and saves policy baselines to apply to other tenants.
 
@@ -66,9 +66,26 @@ flowchart LR
 | **Pre-flight** | Every policy is rewritten for the destination and checked: unmatched objects, name conflicts, missing licenses and roles, removed exclusions, and a before/after view per policy |
 | **Deploy** | Groups and policies are created in order, with progress saved after every object. A run survives a crash, a stop or a dropped connection |
 
+### Migrate enterprise applications
+
+**Applications** in the sidebar migrates apps, apart from the policies, in four steps of its own: **Choose apps**, **Map users & groups**, **Pre-flight** and **Deploy**. It uses the tenants signed in on Connect. Microsoft's own apps and managed identities are left out: every tenant has them.
+
+| Kind | What happens |
+|---|---|
+| **Enterprise apps** | Another organization's app, such as a SaaS app, is created in the destination for the **same app ID**, with its settings (assignment required, visible to users, notes, home page, sign-on URL), its owners, and every user and group assigned to it, each keeping its app role. An app the destination already has can be skipped or updated in place; nothing is taken away from it |
+| **App registrations** | The source's own apps are recreated with a **new app ID**, with their redirect URIs, app roles (same role IDs), optional claims, exposed API scopes and requested permissions, and an application ID URI made from the new app ID. Every new app ID is listed when the run finishes |
+| **Gallery apps** | Made again from the **same gallery template**, then set up as in the source: entity ID, reply and logout URLs, and app roles. An app whose template can't be found is listed to add from the gallery by hand |
+| **SAML single sign-on** | Sign-on mode, relay state, claims mapping policies and the claims on the Attributes & Claims page are copied, with a **new signing certificate**: the old one's private key can't be exported. Pre-flight lists each app whose vendor needs the new certificate or federation metadata |
+
+**Linked to the policy migration.** Each app registration and gallery app Movewise migrates is recorded in an app ID map: old app ID to new. On **Map dependencies**, a policy's app is matched to its migrated copy as **Migrated by Movewise**, and the policy is rewritten with the new app ID. An app the destination doesn't have yet has a **Migrate it in Applications** button, and policy pre-flight lists the policies pointing at missing apps. Migrate the apps first, then the policies.
+
+**What Movewise never does with apps.** It never grants admin consent: the API permissions an app had in the source are listed for an admin to grant. It never copies secrets: client secrets, certificate private keys, provisioning (SCIM), Application Proxy and password-based sign-on are listed under **Set up by hand**. Rolling back an app run deletes the apps it created (Entra ID keeps them for 30 days), and puts back apps it updated, taking off only the owners and assignments it added.
+
+In the destination this needs Application Administrator, Cloud Application Administrator or Global Administrator, and three more Graph permissions (see [docs/app-registration.md](docs/app-registration.md)). More on the [website](https://sameerk27.github.io/movewise/applications.html).
+
 ### Compare, snapshots, baselines and drift
 
-Besides **Migrations**, the sidebar has four screens. All of them only read, except a restore you start yourself.
+Besides **Migrations** and **Applications**, the sidebar has four screens. All of them only read, except a restore you start yourself.
 
 | Screen | What it does |
 |---|---|
@@ -88,7 +105,7 @@ Besides **Migrations**, the sidebar has four screens. All of them only read, exc
 
 ## Download
 
-> **Pre-release.** 0.2.0 is an unsigned test build. Try it against test tenants, and don't hand it to client admins until it's signed (see [what's left](#before-the-first-release)).
+> **Pre-release.** 0.3.0 is an unsigned test build. Try it against test tenants, and don't hand it to client admins until it's signed (see [what's left](#before-the-first-release)).
 
 1. Open the **[latest release](https://github.com/sameerk27/movewise/releases)**. Pre-releases are listed there too.
 2. Download the file for your case:
@@ -116,7 +133,7 @@ Besides **Migrations**, the sidebar has four screens. All of them only read, exc
 | Folder | Holds |
 |---|---|
 | `Projects` | Saved exports. They hold full policy settings, so they're kept out of Documents, which is often synced to OneDrive |
-| `Runs` | One folder per deployment. `run.json` is what resume and rollback work from, and `destination-before` holds the destination's policies as they were before the run |
+| `Runs` | One folder per deployment, of policies or apps. `run.json` is what resume and rollback work from, and `destination-before` holds the destination's policies as they were before the run. `App IDs` holds one file per destination tenant mapping each migrated app's old app ID to its new one |
 | `Snapshots` | Snapshots of tenants, for Compare, Snapshots and the Drift monitor |
 | `Baselines` | Saved baselines, with what their policies point at in the template tenant |
 | `Logs` | Daily support logs, with tokens, secrets, addresses, tenant domains, usernames and IPs removed. **Save support log** in the sidebar zips the last two weeks |
@@ -191,6 +208,7 @@ The version must go up with every release, or installed copies won't see it. The
 | **Purview** | DLP and retention policies with their rules, sensitivity labels and label policies, Endpoint DLP settings |
 | **Teams** | Meeting, messaging, calling, app setup, app permission, channels and update policies with group assignments, plus org-wide settings |
 | **SharePoint and OneDrive** | Sharing, sync and site creation settings |
+| **Applications** | Enterprise apps (same app ID), app registrations and gallery apps (new app ID), with owners, user and group assignments, SAML single sign-on and claims. See [Migrate enterprise applications](#migrate-enterprise-applications) |
 
 Settings every tenant already has, such as default policies and org-wide settings, are changed to match the source rather than created. Only settings that differ are changed, and rolling back puts the earlier values back.
 
@@ -199,7 +217,7 @@ Settings every tenant already has, such as default policies and org-wide setting
 
 <br>
 
-Phases 0 to 5 of the build plan:
+Phases 0 to 5 of the build plan, then application migration:
 
 - [x] Windows app shell (WPF + Blazor Hybrid) with the mockup's layout
 - [x] Sign-in to source and destination through the Windows sign-in broker, one account per tenant; when Movewise has to ask again (new permissions, an expired session), a different account is refused
@@ -235,6 +253,13 @@ Phases 0 to 5 of the build plan:
 - [x] Choose the services to migrate on Connect; discovery and Compare read only those
 - [x] One Movewise per Windows user, and a window that fits small screens
 - [x] 0.2.0, unsigned, published for testing
+- [x] Applications in the sidebar, with its own steps (choose apps, map users and groups, pre-flight, deploy) and its own selection, matches and runs
+- [x] Enterprise apps: created for the same app ID with their settings, owners and user and group assignments (each with its app role); apps already in the destination skipped or updated in place; Microsoft's own apps and managed identities left out
+- [x] App registrations: recreated with a new app ID, with redirect URIs, app roles (same IDs), optional claims, exposed API scopes, requested permissions, and an application ID URI made from the new app ID
+- [x] Gallery apps made again from their gallery template; SAML single sign-on, claims mapping policies and custom claims copied, with a new signing certificate
+- [x] App ID map per destination: policies matched to migrated apps ("Migrated by Movewise") and rewritten with their new app IDs; "Migrate it in Applications" on the policy Map; policy pre-flight lists policies pointing at missing apps
+- [x] Admin consent never granted (permissions listed for an admin) and secrets never copied (listed under "Set up by hand"); rollback deletes created apps, puts back updated ones, and removes their app ID map entries
+- [x] 0.3.0, unsigned, published for testing
 
 </details>
 
@@ -245,6 +270,9 @@ Sign in to both tenants, choose the policies on Discover, match the groups, user
 
 **Does it migrate mailboxes, files or Teams chats?**
 No. Movewise migrates policies and settings only. User data needs a separate data migration tool.
+
+**Can it migrate enterprise apps and app registrations?**
+Yes, since 0.3.0. Enterprise apps keep their app ID; the source's own app registrations and gallery apps get a new one, and SAML apps a new signing certificate. Owners and user and group assignments come with them, and policies are matched to the migrated apps. Admin consent is never granted for you, and secrets aren't copied. See [migrating enterprise applications](https://sameerk27.github.io/movewise/applications.html).
 
 **Can it change the source tenant?**
 No. The source only gets read-only clients: a Graph client with no write methods, and PowerShell sessions that refuse anything but `Get-` cmdlets.
